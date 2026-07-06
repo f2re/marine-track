@@ -67,6 +67,7 @@ class VesselDetection(BaseModel):
     speed_reference: str | None = None
     validation_status: str = "unvalidated"
     validation: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     def to_geojson_feature(self) -> dict[str, Any]:
         props = self.model_dump(mode="json")
