@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from marine_track.models import VesselDetection
+import numpy as np
+
+from marine_track.estimation import bearing_deg
+from marine_track.geospatial import RasterGeoContext, lonlat_to_pixel, pixel_to_lonlat
+from marine_track.models import HeadingMethod, VesselDetection
 from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.raster_detection import detect_candidates_from_raster
 from marine_track.rendering.overview import render_overview
 from marine_track.rendering.vessel_crop import render_vessel_crop
 from marine_track.scene_materializer import MaterializedScene, materialize_scene_from_token
+from marine_track.wake import associate_wake_axis_with_vessel
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,7 @@ def run_detection_for_token(
         land_mask_geojson=land_mask_geojson,
         shoreline_buffer_m=shoreline_buffer_m,
     )
+    enrich_detections_with_wakes(materialized.raster_path, detections)
 
     geojson = write_geojson(detections, run_dir / "detections.geojson")
     csv = write_csv(detections, run_dir / "detections.csv")
@@ -105,6 +112,79 @@ def render_crops(
         output = crop_dir / f"vessel_{index:03d}_{detection.detection_id}.png"
         crops.append(render_vessel_crop(raster_path, detection, output, index=index))
     return crops
+
+
+def enrich_detections_with_wakes(
+    raster_path: Path,
+    detections: list[VesselDetection],
+    crop_size_px: int = 512,
+) -> None:
+    if not detections:
+        return
+    try:
+        import rasterio
+        from rasterio.windows import Window
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError("rasterio is required for wake enrichment") from exc
+
+    with rasterio.open(raster_path) as dataset:
+        context = RasterGeoContext(transform=dataset.transform, crs=dataset.crs)
+        for detection in detections:
+            row, col = lonlat_to_pixel(detection.lon, detection.lat, dataset.transform, dataset.crs)
+            row_i = int(round(row))
+            col_i = int(round(col))
+            half = crop_size_px // 2
+            row0 = max(0, row_i - half)
+            col0 = max(0, col_i - half)
+            row1 = min(dataset.height, row0 + crop_size_px)
+            col1 = min(dataset.width, col0 + crop_size_px)
+            row0 = max(0, row1 - crop_size_px)
+            col0 = max(0, col1 - crop_size_px)
+            window = Window(col0, row0, col1 - col0, row1 - row0)
+            image = dataset.read(1, window=window).astype("float32")
+            if dataset.nodata is not None:
+                image[image == dataset.nodata] = np.nan
+
+            association = associate_wake_axis_with_vessel(image, vessel_yx=(row - row0, col - col0))
+            if association is None:
+                continue
+
+            heading = image_axis_to_geographic_heading(
+                association.line.angle_deg,
+                row=row,
+                col=col,
+                context=context,
+            )
+            detection.wake_type = "linear_wake_axis"
+            detection.heading_deg = heading
+            detection.heading_method = HeadingMethod.WAKE_AXIS
+            detection.heading_ambiguity_deg = 180.0
+            detection.metadata = {
+                **detection.metadata,
+                "wake": {
+                    "detector": "canny_hough",
+                    "axis_angle_image_deg": association.line.angle_deg,
+                    "hough_distance_px": association.line.distance_px,
+                    "accumulator": association.line.accumulator,
+                    "line_distance_to_vessel_px": association.line_distance_px,
+                    "score": association.score,
+                    "crop_size_px": crop_size_px,
+                    "heading_ambiguity_deg": 180.0,
+                },
+            }
+
+
+def image_axis_to_geographic_heading(
+    angle_deg: float,
+    row: float,
+    col: float,
+    context: RasterGeoContext,
+    step_px: float = 32.0,
+) -> float:
+    angle_rad = math.radians(angle_deg)
+    start = pixel_to_lonlat(row, col, context)
+    end = pixel_to_lonlat(row + math.sin(angle_rad) * step_px, col + math.cos(angle_rad) * step_px, context)
+    return bearing_deg(start, end)
 
 
 def write_report_json(

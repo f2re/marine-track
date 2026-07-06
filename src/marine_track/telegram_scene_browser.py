@@ -178,10 +178,9 @@ def bbox_geojson(west: float, south: float, east: float, north: float) -> dict[s
 
 
 def write_temp_aoi(payload: dict[str, object]) -> Path:
-    tmp = NamedTemporaryFile("w", suffix=".geojson", prefix="marine_track_bbox_", delete=False)
-    with tmp:
+    with NamedTemporaryFile("w", suffix=".geojson", prefix="marine_track_bbox_", delete=False) as tmp:
         json.dump(payload, tmp)
-    return Path(tmp.name)
+        return Path(tmp.name)
 
 
 def run_dir(base_dir: Path, prefix: str) -> Path:
@@ -211,14 +210,23 @@ def scene_keyboard(tokens: list[str], scenes: list[Scene], max_buttons: int = 12
     return InlineKeyboardMarkup(rows)
 
 
-def format_scenes_message(provider: str, sensor: Sensor, scenes: list[Scene], hours: int) -> str:
+def format_scenes_message(
+    provider: str,
+    sensor: Sensor,
+    scenes: list[Scene],
+    hours: int,
+    cache_hit: bool | None = None,
+) -> str:
     lines = [
         f"<b>Доступные снимки за последние {hours} ч</b>",
         f"provider: <code>{html.escape(provider)}</code>",
         f"sensor: <code>{sensor.value}</code>",
         f"count: <code>{len(scenes)}</code>",
-        "",
     ]
+    if cache_hit is not None:
+        cache_status = "hit" if cache_hit else "refresh"
+        lines.append(f"search_cache: <code>{cache_status}</code>")
+    lines.append("")
     for index, scene in enumerate(scenes[:12], start=1):
         time_text = html.escape(scene.acquisition_time.isoformat())
         product = html.escape(scene.product_id[:80])
@@ -329,7 +337,7 @@ async def list_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await status.edit_text(f"За последние {hours} ч снимков не найдено.")
         return
     await status.edit_text(
-        format_scenes_message(result.provider, result.sensor, scenes, hours),
+        format_scenes_message(result.provider, result.sensor, scenes, hours, cache_hit=result.cache_hit),
         parse_mode=ParseMode.HTML,
         reply_markup=scene_keyboard(tokens, scenes),
     )
@@ -392,7 +400,7 @@ async def bbox_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await status.edit_text(f"За последние {hours} ч снимков не найдено.")
         return
     await status.edit_text(
-        format_scenes_message(result.provider, result.sensor, scenes, hours),
+        format_scenes_message(result.provider, result.sensor, scenes, hours, cache_hit=result.cache_hit),
         parse_mode=ParseMode.HTML,
         reply_markup=scene_keyboard(tokens, scenes),
     )

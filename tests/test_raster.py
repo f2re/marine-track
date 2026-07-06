@@ -12,6 +12,13 @@ def test_percentile_normalize_scales_finite_values():
     assert np.isnan(out[1, 1])
 
 
+def test_percentile_normalize_keeps_sparse_bright_targets():
+    image = np.zeros((64, 64), dtype=float)
+    image[20:23, 30:33] = 100.0
+    out = percentile_normalize(image)
+    assert out[20:23, 30:33].max() == pytest.approx(1.0)
+
+
 def test_iter_tiles_with_overlap():
     image = np.zeros((5, 5), dtype=float)
     tiles = list(iter_tiles(image, tile_size=3, overlap=1))

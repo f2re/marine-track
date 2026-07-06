@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import numpy as np
 
@@ -52,8 +52,11 @@ def percentile_normalize(
 
     lo, hi = np.nanpercentile(image[finite], [lower, upper])
     if hi <= lo:
-        out[finite] = 0.0
-        return out
+        lo = float(np.nanmin(image[finite]))
+        hi = float(np.nanmax(image[finite]))
+        if hi <= lo:
+            out[finite] = 0.0
+            return out
     out[finite] = np.clip((image[finite] - lo) / (hi - lo), 0.0, 1.0)
     return out
 

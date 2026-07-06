@@ -31,13 +31,15 @@ bash deploy_telegram_bot.sh --providers all
 - Общий raster cache: один и тот же product/asset/AOI не скачивается повторно.
 - Автоматическая сборка land/shoreline mask из URL или локального ZIP/SHP/GeoJSON.
 - Local-CFAR style detector для bright compact targets.
-- Overview PNG, crop PNG, GeoJSON, CSV, Parquet и `report.json`.
+- Консервативная wake-axis association вокруг каждого судна через Canny+Hough; heading сохраняется с флагом неоднозначности 180°.
+- Overview PNG с точками/номерами судов.
+- Crop PNG по каждому найденному судну, включая wake-axis overlay при наличии.
+- Вывод GeoJSON, CSV, Parquet и `report.json`.
 
 ## Что пока не реализовано
 
 - Полноценный Sentinel-2 band stack B02/B03/B04/B08 + SCL/cloud/water mask.
-- Wake association вокруг каждого судна.
-- Heading/speed enrichment из wake geometry.
+- Speed enrichment из wake geometry.
 - AIS track rendering на crop.
 - Обработка ASF ZIP/GRD через SNAP/pyroSAR.
 
@@ -152,9 +154,11 @@ MARINE_TRACK_RUN_OUTPUT_RETENTION_DAYS=7
 MARINE_TRACK_CLEANUP_ON_DEPLOY=1
 ```
 
-`scene_search` cache хранит результат поиска scenes по AOI/sensor/lookback/max_results. Пока TTL не истек, `/detectbbox` не делает новый provider API call. После TTL выполняется refresh и появляется шанс поймать новый снимок.
+`scene_search` cache хранит результат поиска scenes по AOI/sensor/lookback/max_results. Пока TTL не истек, `/dates`, `/bboxdates` и `/detectbbox` не делают новый provider API call. После TTL выполняется refresh и появляется шанс поймать новый снимок.
 
 `raster` cache хранит скачанный или AOI-cropped GeoTIFF по ключу provider/product/asset/AOI. Повторная детекция того же снимка и района использует локальный файл.
+
+Старые search-cache, raster-cache, mask-cache и detection outputs удаляются по retention во время install/deploy или вручную через CLI.
 
 Ручная очистка:
 

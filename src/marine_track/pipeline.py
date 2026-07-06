@@ -5,6 +5,12 @@ from datetime import datetime
 from pathlib import Path
 
 from marine_track.assets import write_asset_manifest, write_scenes_json
+from marine_track.cache_policy import (
+    read_scene_search_cache,
+    search_cache_key,
+    search_cache_path,
+    write_scene_search_cache,
+)
 from marine_track.config import AppConfig, load_config
 from marine_track.data_sources import (
     ASFProvider,
@@ -23,6 +29,7 @@ class SearchStageResult:
     scene_count: int
     scenes_json: Path
     asset_manifest: Path | None
+    cache_hit: bool = False
 
 
 def parse_utc_datetime(value: str) -> datetime:
@@ -88,6 +95,21 @@ def run_search_stage(
     write_manifest: bool = True,
 ) -> SearchStageResult:
     output.mkdir(parents=True, exist_ok=True)
+    cache_key = search_cache_key(aoi, start, end, sensor, max_results)
+    cached = read_scene_search_cache(search_cache_path(cache_key))
+    if cached is not None:
+        provider, concrete_sensor, scenes = cached
+        scenes_json = write_scenes_json(scenes, output / "scenes.json")
+        asset_manifest = write_asset_manifest(scenes, output / "assets.csv") if write_manifest else None
+        return SearchStageResult(
+            provider=provider,
+            sensor=concrete_sensor,
+            scene_count=len(scenes),
+            scenes_json=scenes_json,
+            asset_manifest=asset_manifest,
+            cache_hit=True,
+        )
+
     config = load_config()
     provider, concrete_sensor, scenes = search_scenes_with_fallback(
         config=config,
@@ -99,10 +121,12 @@ def run_search_stage(
     )
     scenes_json = write_scenes_json(scenes, output / "scenes.json")
     asset_manifest = write_asset_manifest(scenes, output / "assets.csv") if write_manifest else None
+    write_scene_search_cache(search_cache_path(cache_key), provider, concrete_sensor, scenes)
     return SearchStageResult(
         provider=provider,
         sensor=concrete_sensor,
         scene_count=len(scenes),
         scenes_json=scenes_json,
         asset_manifest=asset_manifest,
+        cache_hit=False,
     )

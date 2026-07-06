@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import cv2
@@ -52,6 +53,7 @@ def draw_crop_overlay(canvas: np.ndarray, x: int, y: int, detection: VesselDetec
     cv2.circle(canvas, (x, y), 12, (0, 0, 255), 2)
     cv2.line(canvas, (x - 18, y), (x + 18, y), (0, 255, 255), 1)
     cv2.line(canvas, (x, y - 18), (x, y + 18), (0, 255, 255), 1)
+    draw_wake_axis(canvas, x, y, detection)
     lines = [
         f"#{index} conf={detection.confidence:.2f}",
         f"lon={detection.lon:.5f} lat={detection.lat:.5f}",
@@ -70,3 +72,17 @@ def draw_crop_overlay(canvas: np.ndarray, x: int, y: int, detection: VesselDetec
             1,
             cv2.LINE_AA,
         )
+
+
+def draw_wake_axis(canvas: np.ndarray, x: int, y: int, detection: VesselDetection) -> None:
+    wake = detection.metadata.get("wake")
+    if not isinstance(wake, dict):
+        return
+    angle = wake.get("axis_angle_image_deg")
+    if not isinstance(angle, (int, float)):
+        return
+    length = min(canvas.shape[:2]) // 3
+    angle_rad = math.radians(float(angle))
+    dx = int(round(math.cos(angle_rad) * length))
+    dy = int(round(math.sin(angle_rad) * length))
+    cv2.line(canvas, (x - dx, y - dy), (x + dx, y + dy), (255, 180, 0), 2)
