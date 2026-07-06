@@ -26,6 +26,8 @@ REQUIRED_MODULES = (
     "pystac_client",
     "asf_search",
     "planetary_computer",
+    "sentinelhub",
+    "copernicusmarine",
     "marine_track.cli",
     "marine_track.pipeline",
     "marine_track.telegram_bot",
@@ -34,6 +36,9 @@ REQUIRED_MODULES = (
     "marine_track.detection_scene_search",
     "marine_track.scene_materializer",
     "marine_track.land_mask",
+    "marine_track.provider_auth",
+    "marine_track.data_sources.sentinelhub_provider",
+    "marine_track.copernicus_marine_provider",
 )
 
 
@@ -60,6 +65,9 @@ def check_paths() -> list[str]:
     land_mask = os.getenv("MARINE_TRACK_LAND_MASK_GEOJSON", "").strip()
     if land_mask and not project_path(land_mask).is_file():
         errors.append(f"land mask GeoJSON not found: {project_path(land_mask)}")
+    local_track_csv = os.getenv("MARINE_TRACK_AIS_CSV", "").strip()
+    if local_track_csv and not project_path(local_track_csv).is_file():
+        errors.append(f"local vessel track CSV not found: {project_path(local_track_csv)}")
     out_dir = project_path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram"))
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
