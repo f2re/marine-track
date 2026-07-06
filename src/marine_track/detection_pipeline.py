@@ -39,7 +39,7 @@ def run_detection_for_token(
 ) -> DetectionRunResult:
     run_dir = output_dir / "detections" / token
     run_dir.mkdir(parents=True, exist_ok=True)
-    materialized = materialize_scene_from_token(token, output_dir, cache_dir=run_dir / "assets")
+    materialized = materialize_scene_from_token(token, output_dir)
     detections = detect_candidates_from_raster(
         path=materialized.raster_path,
         satellite=materialized.scene.sensor.value,
@@ -129,6 +129,7 @@ def write_report_json(
         "acquisition_time": materialized.scene.acquisition_time.isoformat(),
         "raster_key": materialized.raster_key,
         "raster_path": str(materialized.raster_path),
+        "raster_cache_hit": materialized.cache_hit,
         "aoi_crop": materialized.cropped,
         "detector": {
             "name": "local_cfar" if local_window_px > 0 else "global_threshold",
