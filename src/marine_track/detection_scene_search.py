@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from marine_track.assets import write_asset_manifest, write_scenes_json
-from marine_track.data_sources import SearchRequest, SourceManager, default_stac_providers
+from marine_track.data_sources import SearchRequest, default_stac_providers
 from marine_track.models import Scene, Sensor
 from marine_track.scene_materializer import select_processing_asset
 
@@ -34,7 +34,7 @@ def search_detection_capable_scenes(
 ) -> DetectionSceneSearchResult:
     output.mkdir(parents=True, exist_ok=True)
     errors: list[str] = []
-    manager = SourceManager(default_stac_providers())
+    providers = {provider.name: provider for provider in default_stac_providers()}
 
     for concrete_sensor in resolve_sensor_order(sensor):
         request = SearchRequest(
@@ -45,8 +45,10 @@ def search_detection_capable_scenes(
             max_results=max_results,
         )
         for provider_name in DETECTION_PROVIDER_ORDER.get(concrete_sensor, []):
+            provider = providers.get(provider_name)
+            if provider is None or not provider.can_handle(concrete_sensor):
+                continue
             try:
-                provider = manager.providers[provider_name]
                 scenes = provider.search(request)
                 processable = [scene for scene in scenes if select_processing_asset(scene) is not None]
                 if processable:
