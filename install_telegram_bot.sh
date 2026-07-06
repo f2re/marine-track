@@ -7,6 +7,7 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/marine_track}"
 SERVICE_NAME="${SERVICE_NAME:-marine-track-bot}"
 SERVICE_USER="${SERVICE_USER:-marinetrack}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+PROVIDER_PROFILE="${MARINE_TRACK_PROVIDER_PROFILE:-all}"
 SKIP_APT=0
 NO_START=0
 STATUS_ONLY=0
@@ -36,13 +37,19 @@ Options:
   --service-name NAME
   --service-user USER
   --python PATH
+  --providers PROFILE      Provider dependencies: all, scene, aux, core, none. Default: all
   --yes
   --skip-apt
   --no-start
   --status
   -h, --help
 
-Before start, put bot credentials into .env or export them in environment.
+Provider profiles:
+  all    install core package plus scene and auxiliary provider packages
+  scene  install core package plus scene provider packages only
+  aux    install core package plus auxiliary provider packages only
+  core   install only core package; provider imports are skipped by runtime check
+  none   alias for core
 EOF
 }
 
@@ -52,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     --service-name) SERVICE_NAME="$2"; shift 2 ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --python) PYTHON_BIN="$2"; shift 2 ;;
+    --providers) PROVIDER_PROFILE="$2"; shift 2 ;;
     --yes) ASSUME_YES=1; shift ;;
     --skip-apt) SKIP_APT=1; shift ;;
     --no-start) NO_START=1; shift ;;
@@ -74,6 +82,23 @@ confirm() {
   local answer=""
   read -r -p "$1 [Y/n]: " answer
   [[ -z "$answer" || "$answer" =~ ^[YyДд]$ ]]
+}
+
+normalize_provider_profile() {
+  case "$PROVIDER_PROFILE" in
+    all|scene|aux|core) ;;
+    none) PROVIDER_PROFILE="core" ;;
+    *) fail "invalid provider profile: $PROVIDER_PROFILE. Use all, scene, aux, core, none" ;;
+  esac
+}
+
+pip_install_target() {
+  case "$PROVIDER_PROFILE" in
+    all) printf '%s[providers]' "$INSTALL_DIR" ;;
+    scene) printf '%s[scene-providers]' "$INSTALL_DIR" ;;
+    aux) printf '%s[aux-providers]' "$INSTALL_DIR" ;;
+    core) printf '%s' "$INSTALL_DIR" ;;
+  esac
 }
 
 print_status() {
@@ -124,6 +149,7 @@ write_env_if_missing() {
     warn "created $ENV_FILE; edit it before starting if credentials are empty"
   fi
   sync_env_defaults
+  set_env_key "MARINE_TRACK_PROVIDER_PROFILE" "$PROVIDER_PROFILE"
 }
 
 sync_env_defaults() {
@@ -143,10 +169,23 @@ sync_env_defaults() {
   run_root chmod 0640 "$ENV_FILE"
 }
 
+set_env_key() {
+  local key="$1"
+  local value="$2"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    run_root sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    printf '\n%s=%s\n' "$key" "$value" | run_root tee -a "$ENV_FILE" >/dev/null
+  fi
+}
+
 create_venv() {
+  local target
+  target="$(pip_install_target)"
   run_user "$SERVICE_USER" "$PYTHON_BIN" -m venv "$VENV_DIR"
   run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
-  run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" -m pip install --prefer-binary -e "$INSTALL_DIR"
+  log "installing python package with provider profile: $PROVIDER_PROFILE ($target)"
+  run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" -m pip install --prefer-binary -e "$target"
   run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" -m pip check
 }
 
@@ -196,6 +235,7 @@ installed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 install_dir=$INSTALL_DIR
 service_name=$SERVICE_NAME
 service_user=$SERVICE_USER
+provider_profile=$PROVIDER_PROFILE
 venv=$VENV_DIR
 unit=$UNIT_PATH
 EOF
@@ -203,16 +243,17 @@ EOF
 }
 
 main() {
+  normalize_provider_profile
   print_status
   [[ "$STATUS_ONLY" -eq 1 ]] && exit 0
   require_repo_files
-  confirm "Install Marine Track Telegram bot to $INSTALL_DIR?" || fail "cancelled"
+  confirm "Install Marine Track Telegram bot to $INSTALL_DIR with provider profile '$PROVIDER_PROFILE'?" || fail "cancelled"
   install_system_packages
   ensure_user
   copy_project
   write_env_if_missing
   create_venv
-  run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" "$INSTALL_DIR/runtime_check.py"
+  run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" MARINE_TRACK_PROVIDER_PROFILE="$PROVIDER_PROFILE" "$VENV_DIR/bin/python" "$INSTALL_DIR/runtime_check.py"
   write_service
   start_service
   write_state
