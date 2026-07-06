@@ -130,16 +130,16 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
     try:
         result = await asyncio.to_thread(
             run_detection_for_token,
-            token,
-            config.output_dir,
-            config.detection_max_crops,
-            3.5,
-            2,
-            5000,
-            31,
-            5,
-            config.land_mask_geojson,
-            config.shoreline_buffer_m,
+            token=token,
+            output_dir=config.output_dir,
+            max_crops=config.detection_max_crops,
+            threshold_sigma=3.5,
+            min_area_px=2,
+            max_area_px=5000,
+            local_window_px=31,
+            guard_window_px=5,
+            land_mask_geojson=config.land_mask_geojson,
+            shoreline_buffer_m=config.shoreline_buffer_m,
         )
     except MaterializationError as exc:
         await status.edit_text(
