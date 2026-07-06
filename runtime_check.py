@@ -73,6 +73,7 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_DEFAULT_LOOKBACK_HOURS",
         "MARINE_TRACK_MAX_RESULTS",
         "MARINE_TRACK_MAX_CONCURRENT_JOBS",
+        "MARINE_TRACK_DETECTION_MAX_CROPS",
     ):
         raw = os.getenv(name)
         if raw is None:
