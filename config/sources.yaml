@@ -1,0 +1,43 @@
+sensors:
+  sentinel1:
+    priority:
+      - asf
+      - copernicus_cdse
+      - planetary_computer
+      - earthsearch
+    filters:
+      platform: SENTINEL1
+      product_type: GRD
+      beam_modes: [IW, EW, SM]
+      polarizations: [VV, VH, HH, HV]
+      min_confidence: 0.5
+
+  sentinel2:
+    priority:
+      - copernicus_cdse
+      - planetary_computer
+      - sentinelhub
+      - earthsearch
+    filters:
+      product_type: L2A
+      max_cloud_cover: 30
+      bands_10m: [B02, B03, B04, B08]
+
+auxiliary:
+  marine:
+    priority:
+      - copernicus_marine
+    variables:
+      - sea_water_velocity
+      - sea_surface_temperature
+      - wave_height
+      - wind
+
+  ais:
+    priority:
+      - local_ais
+      - noaa_marinecadastre
+      - global_fishing_watch
+    validation:
+      time_window_minutes: 30
+      max_match_distance_m: 3000
