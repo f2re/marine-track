@@ -41,6 +41,8 @@ class ASFProvider(SceneProvider):
         scenes: list[Scene] = []
         for product in results:
             props = product.properties
+            download_url = props.get("url")
+            assets = {"product": download_url} if download_url else {}
             scenes.append(
                 Scene(
                     provider=self.name,
@@ -48,8 +50,9 @@ class ASFProvider(SceneProvider):
                     product_id=props.get("sceneName") or props.get("fileID") or "unknown",
                     acquisition_time=_parse_datetime(props.get("startTime")),
                     footprint_wkt=props.get("stringFootprint"),
-                    download_url=props.get("url"),
-                    polarization=props.get("polarization"),
+                    download_url=download_url,
+                    assets=assets,
+                    polarizations=_parse_polarizations(props.get("polarization")),
                     beam_mode=props.get("beamModeType"),
                     metadata=dict(props),
                 )
@@ -63,3 +66,13 @@ def _parse_datetime(value: object) -> datetime:
     if isinstance(value, str):
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     raise ValueError(f"Unsupported datetime value: {value!r}")
+
+
+def _parse_polarizations(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [part.strip() for part in value.replace("+", ",").split(",") if part.strip()]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
