@@ -9,12 +9,19 @@ from tempfile import NamedTemporaryFile
 
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from marine_track.models import Scene, Sensor
 from marine_track.pipeline import run_search_stage
 from marine_track.telegram_commands import BOT_COMMAND_LINES
 from marine_track.telegram_config import TelegramBotConfig, load_telegram_config
+from marine_track.telegram_scene_browser import (
+    CALLBACK_PREFIX,
+    bbox_dates_command as scene_bbox_dates_command,
+    image_callback as scene_image_callback,
+    image_command as scene_image_command,
+    list_dates_command as scene_dates_command,
+)
 
 CONFIG: TelegramBotConfig | None = None
 JOB_SEMAPHORE: asyncio.Semaphore | None = None
@@ -26,11 +33,18 @@ HELP_TEXT = """<b>Marine Track Bot</b>
 
 Команды:
 <code>/search [auto|sentinel1|sentinel2] [hours]</code>
-Поиск по AOI из .env. Пример: <code>/search sentinel1 72</code>
+Поиск сцен по AOI из .env. Пример: <code>/search sentinel1 72</code>
+
+<code>/dates [auto|sentinel1|sentinel2] [hours]</code>
+Доступные сроки снимков по AOI из .env. По умолчанию последние 12 часов.
 
 <code>/bbox [auto|sentinel1|sentinel2] west south east north [hours]</code>
 Поиск по прямоугольнику. Пример: <code>/bbox sentinel1 36.5 43.8 38.5 45.0 72</code>
 
+<code>/bboxdates [auto|sentinel1|sentinel2] west south east north [hours]</code>
+Сроки снимков по прямоугольнику. Пример: <code>/bboxdates sentinel1 36.5 43.8 38.5 45.0 12</code>
+
+<code>/image token</code> — отправить preview/quicklook для ранее найденного срока.
 <code>/status</code> — конфигурация и ограничения.
 <code>/whoami</code> — ваш Telegram user id для TELEGRAM_ADMIN_IDS.
 """
@@ -160,7 +174,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await message.reply_text(
         "🚢 Marine Track\n\n"
         "MVP для поиска Sentinel-1/Sentinel-2 сцен под задачу обнаружения судов и кильватерных следов.\n\n"
-        "Начните с /search или /bbox. Справка: /help"
+        "Сроки снимков: /dates или /bboxdates. Справка: /help"
     )
 
 
@@ -306,6 +320,32 @@ async def bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+async def dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_authorized(update):
+        return
+    async with get_semaphore():
+        await scene_dates_command(update, context, get_config())
+
+
+async def bboxdates_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_authorized(update):
+        return
+    async with get_semaphore():
+        await scene_bbox_dates_command(update, context, get_config())
+
+
+async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_authorized(update):
+        return
+    await scene_image_command(update, context, get_config())
+
+
+async def scene_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_authorized(update):
+        return
+    await scene_image_callback(update, context, get_config())
+
+
 def build_application() -> Application:
     config = get_config()
     application = Application.builder().token(config.token).build()
@@ -315,6 +355,10 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("whoami", whoami_command))
     application.add_handler(CommandHandler("search", search_command))
     application.add_handler(CommandHandler("bbox", bbox_command))
+    application.add_handler(CommandHandler("dates", dates_command))
+    application.add_handler(CommandHandler("bboxdates", bboxdates_command))
+    application.add_handler(CommandHandler("image", image_command))
+    application.add_handler(CallbackQueryHandler(scene_callback, pattern=f"^{CALLBACK_PREFIX}:"))
     return application
 
 
