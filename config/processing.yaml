@@ -1,0 +1,46 @@
+preprocessing:
+  sentinel1:
+    preferred_product: RTC
+    fallback_product: GRD
+    speckle_filter: lee
+    land_mask: true
+    shoreline_buffer_m: 500
+    tile_size_px: 1024
+    tile_overlap_px: 128
+
+  sentinel2:
+    use_cloud_mask: true
+    use_water_mask: true
+    target_resolution_m: 10
+    required_bands: [B02, B03, B04, B08]
+
+ship_detection:
+  sar:
+    method: cfar
+    min_area_px: 2
+    max_area_px: 5000
+    local_window_px: 128
+    threshold_sigma: 3.5
+
+  optical:
+    method: adaptive_threshold
+    min_area_px: 2
+    max_area_px: 3000
+    contrast_percentile: 98.5
+
+wake_detection:
+  crop_size_m: 5000
+  min_wake_length_m: 200
+  hough_threshold: 20
+  max_heading_error_deg: 20
+  kelvin_angle_deg: 19.47
+  kelvin_angle_tolerance_deg: 8
+
+speed_estimation:
+  sentinel2_interband:
+    min_displacement_px: 1.5
+    max_speed_knots: 80
+  kelvin_wavelength:
+    min_wavelength_px: 3
+    gravity_mps2: 9.80665
+    deep_water_only: true
