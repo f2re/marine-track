@@ -50,8 +50,7 @@ def adaptive_threshold_candidates(
             continue
         cy, cx = ndi.center_of_mass(component)
         y0, x0 = slc[0].start, slc[1].start
-        y1, x1 = slc[0].stop
-        x1 = slc[1].stop
+        y1, x1 = slc[0].stop, slc[1].stop
         score = float(np.nanmean(image[slc][component]))
         candidates.append(
             PixelObject(
