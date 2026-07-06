@@ -7,8 +7,19 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from marine_track.detection_pipeline import DetectionRunResult, run_detection_for_token
+from marine_track.detection_scene_search import search_detection_capable_scenes
 from marine_track.scene_materializer import MaterializationError
 from marine_track.telegram_config import TelegramBotConfig
+from marine_track.telegram_scene_browser import (
+    DEFAULT_HOURS,
+    bbox_geojson,
+    parse_scene_hours,
+    parse_scene_sensor,
+    register_scenes,
+    run_dir,
+    utc_window,
+    write_temp_aoi,
+)
 
 DETECT_CALLBACK_PREFIX = "mtdetect"
 
@@ -24,6 +35,75 @@ async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE, con
         )
         return
     await send_detection_by_token(update, args[0].strip(), config)
+
+
+async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
+    message = update.effective_message
+    if not message:
+        return
+    args = list(context.args or [])
+    if len(args) < 5:
+        await message.reply_text(
+            "Формат: /detectbbox [auto|sentinel1|sentinel2] west south east north [hours]\n"
+            "Пример: /detectbbox sentinel1 36.5 43.8 38.5 45.0 12"
+        )
+        return
+    try:
+        sensor = parse_scene_sensor(args[0], config.default_sensor)
+        west, south, east, north = [float(value) for value in args[1:5]]
+        hours = parse_scene_hours(args[5] if len(args) > 5 else None, DEFAULT_HOURS)
+        aoi_geojson = bbox_geojson(west, south, east, north)
+        aoi_path = write_temp_aoi(aoi_geojson)
+    except ValueError as exc:
+        await message.reply_text(f"Ошибка: {exc}")
+        return
+
+    start, end = utc_window(hours)
+    search_dir = run_dir(config.output_dir, "detectbbox")
+    status = await message.reply_text(
+        "⏳ Ищу обрабатываемые GeoTIFF/COG сцены: "
+        f"sensor={sensor.value}, bbox={west},{south},{east},{north}, период={hours} ч"
+    )
+    try:
+        result = await asyncio.to_thread(
+            search_detection_capable_scenes,
+            aoi_path,
+            start,
+            end,
+            sensor,
+            search_dir,
+            config.max_results,
+        )
+        tokens = register_scenes(
+            config.output_dir,
+            result.provider,
+            result.sensor,
+            result.scenes,
+            result.scenes_json,
+            result.asset_manifest,
+            aoi_geojson=aoi_geojson,
+        )
+    except Exception as exc:
+        await status.edit_text(f"Ошибка поиска detection-capable сцен: {exc}")
+        return
+    finally:
+        aoi_path.unlink(missing_ok=True)
+
+    if not tokens:
+        await status.edit_text("Не найдено сцен с GeoTIFF/COG assets для детекции.")
+        return
+    token = tokens[0]
+    first_scene = result.scenes[0]
+    await status.edit_text(
+        "Найдена сцена для детекции:\n"
+        f"token: {token}\n"
+        f"provider: {result.provider}\n"
+        f"sensor: {result.sensor.value}\n"
+        f"time: {first_scene.acquisition_time.isoformat()}\n"
+        f"product: {first_scene.product_id[:120]}\n\n"
+        "Запускаю обработку."
+    )
+    await send_detection_by_token(update, token, config)
 
 
 async def detect_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
@@ -66,6 +146,7 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
 
 def summary_text(result: DetectionRunResult) -> str:
     scene = result.materialized.scene
+    crop_status = "yes" if result.materialized.cropped else "no"
     return (
         "✅ Детекция завершена\n"
         f"token: {result.token}\n"
@@ -74,7 +155,8 @@ def summary_text(result: DetectionRunResult) -> str:
         f"time: {scene.acquisition_time.isoformat()}\n"
         f"product: {scene.product_id[:120]}\n"
         f"detections: {len(result.detections)}\n"
-        f"raster: {result.materialized.raster_key}"
+        f"raster: {result.materialized.raster_key}\n"
+        f"aoi_crop: {crop_status}"
     )
 
 
