@@ -48,6 +48,7 @@ class SceneRegistryRecord:
     scenes_json: str
     asset_manifest: str | None
     created_at: str
+    aoi_geojson: dict[str, object] | None = None
 
 
 def parse_scene_hours(value: str | None, default: int = DEFAULT_HOURS) -> int:
@@ -111,6 +112,7 @@ def register_scenes(
     scenes: list[Scene],
     scenes_json: Path,
     asset_manifest: Path | None,
+    aoi_geojson: dict[str, object] | None = None,
 ) -> list[str]:
     registry = load_registry(output_dir)
     tokens: list[str] = []
@@ -125,6 +127,7 @@ def register_scenes(
             scenes_json=str(scenes_json),
             asset_manifest=str(asset_manifest) if asset_manifest else None,
             created_at=created_at,
+            aoi_geojson=aoi_geojson,
         )
         registry[token] = record.__dict__
         tokens.append(token)
@@ -140,6 +143,14 @@ def find_scene(output_dir: Path, token: str) -> tuple[Scene, dict[str, object]] 
     if not isinstance(scene_payload, dict):
         return None
     return Scene.model_validate(scene_payload), record
+
+
+def read_geojson(path: Path) -> dict[str, object]:
+    with path.open("r", encoding="utf-8") as file_obj:
+        payload = json.load(file_obj)
+    if not isinstance(payload, dict):
+        raise ValueError(f"AOI GeoJSON must be an object: {path}")
+    return payload
 
 
 def bbox_geojson(west: float, south: float, east: float, north: float) -> dict[str, object]:
@@ -285,6 +296,7 @@ async def list_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await message.reply_text(f"AOI не найден: {config.default_aoi}")
         return
 
+    aoi_geojson = read_geojson(config.default_aoi)
     start, end = utc_window(hours)
     out_dir = run_dir(config.output_dir, "dates")
     status = await message.reply_text(f"⏳ Ищу снимки за последние {hours} ч: {sensor.value}")
@@ -311,6 +323,7 @@ async def list_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         scenes,
         result.scenes_json,
         result.asset_manifest,
+        aoi_geojson=aoi_geojson,
     )
     if not scenes:
         await status.edit_text(f"За последние {hours} ч снимков не найдено.")
@@ -337,7 +350,8 @@ async def bbox_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         sensor = parse_scene_sensor(args[0], config.default_sensor)
         west, south, east, north = [float(value) for value in args[1:5]]
         hours = parse_scene_hours(args[5] if len(args) > 5 else None, DEFAULT_HOURS)
-        aoi_path = write_temp_aoi(bbox_geojson(west, south, east, north))
+        aoi_geojson = bbox_geojson(west, south, east, north)
+        aoi_path = write_temp_aoi(aoi_geojson)
     except ValueError as exc:
         await message.reply_text(f"Ошибка: {exc}")
         return
@@ -372,6 +386,7 @@ async def bbox_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         scenes,
         result.scenes_json,
         result.asset_manifest,
+        aoi_geojson=aoi_geojson,
     )
     if not scenes:
         await status.edit_text(f"За последние {hours} ч снимков не найдено.")
