@@ -8,7 +8,9 @@ from rich.table import Table
 
 from marine_track.config import load_config
 from marine_track.models import Sensor
+from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.pipeline import parse_utc_datetime, run_search_stage, search_scenes_with_fallback
+from marine_track.raster_detection import detect_candidates_from_raster
 
 app = typer.Typer(help="Marine Track MVP: vessel and ship-wake detection from satellite imagery")
 console = Console()
@@ -77,6 +79,35 @@ def run(
     console.print(f"Saved provenance: {result.scenes_json}")
     if result.asset_manifest:
         console.print(f"Saved asset manifest: {result.asset_manifest}")
+
+
+@app.command("detect-raster")
+def detect_raster(
+    raster: Path = typer.Option(..., exists=True, readable=True, help="Single-band GeoTIFF path"),
+    output: Path = typer.Option(Path("runs/latest/detections.geojson")),
+    satellite: str = typer.Option("unknown"),
+    provider: str = typer.Option("local"),
+    product_id: str = typer.Option("local-raster"),
+    acquisition_time: str = typer.Option(..., help="UTC acquisition time"),
+    threshold_sigma: float = typer.Option(3.5),
+    min_area_px: int = typer.Option(2),
+    max_area_px: int = typer.Option(5000),
+) -> None:
+    """Detect bright vessel candidates in one local georeferenced raster band."""
+    detections = detect_candidates_from_raster(
+        path=raster,
+        satellite=satellite,
+        provider=provider,
+        product_id=product_id,
+        acquisition_time=parse_utc_datetime(acquisition_time),
+        threshold_sigma=threshold_sigma,
+        min_area_px=min_area_px,
+        max_area_px=max_area_px,
+    )
+    write_geojson(detections, output)
+    write_csv(detections, output.with_suffix(".csv"))
+    write_parquet(detections, output.with_suffix(".parquet"))
+    console.print(f"[green]Saved {len(detections)} detections to {output}[/green]")
 
 
 if __name__ == "__main__":
