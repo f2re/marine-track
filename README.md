@@ -24,7 +24,7 @@ AOI или bbox → поиск Sentinel-сцен → выбор срока → G
 - Overview PNG с точками/номерами судов.
 - Crop PNG по каждому найденному судну.
 - Вывод GeoJSON, CSV, Parquet и `report.json`.
-- Install/deploy scripts для systemd-сервиса.
+- Install/deploy scripts для systemd-сервиса с профилями provider-зависимостей.
 
 ## Что пока не реализовано
 
@@ -37,12 +37,20 @@ AOI или bbox → поиск Sentinel-сцен → выбор срока → G
 
 ## Быстрый старт для разработки
 
+Core-only:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
 python -m pytest -q
 ruff check src tests
+```
+
+Со всеми provider-пакетами:
+
+```bash
+pip install -e .[providers,dev]
 ```
 
 CLI:
@@ -95,10 +103,27 @@ cd marine-track
 
 3. Узнать свой Telegram user id. Можно запустить бота без `TELEGRAM_ADMIN_IDS`, выполнить `/whoami`, затем добавить id в `.env`.
 
-4. Установить сервис:
+4. Установить сервис. По умолчанию ставятся все provider-пакеты:
 
 ```bash
-TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_telegram_bot.sh --yes
+TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_telegram_bot.sh --providers all --yes
+```
+
+Профили provider-зависимостей:
+
+```text
+all    = core + scene providers + auxiliary providers
+scene  = core + ASF/STAC/Planetary Computer/Sentinel Hub
+aux    = core + Copernicus Marine
+core   = только core; provider-пакеты не ставятся
+none   = alias для core
+```
+
+Примеры:
+
+```bash
+bash install_telegram_bot.sh --providers scene --yes
+bash install_telegram_bot.sh --providers core --yes
 ```
 
 По умолчанию используется:
@@ -131,8 +156,11 @@ MARINE_TRACK_DEFAULT_SENSOR=auto
 MARINE_TRACK_DEFAULT_LOOKBACK_HOURS=72
 MARINE_TRACK_MAX_RESULTS=10
 MARINE_TRACK_MAX_CONCURRENT_JOBS=1
+MARINE_TRACK_PROVIDER_PROFILE=all
 MARINE_TRACK_DETECTION_MAX_CROPS=10
 ```
+
+`MARINE_TRACK_PROVIDER_PROFILE` синхронизируется install/deploy-скриптами и управляет тем, какие provider modules проверяет `runtime_check.py`.
 
 Опционально для подавления береговых ложных целей:
 
@@ -185,10 +213,16 @@ NOAA_MARINECADASTRE_CACHE_DIR=runs/noaa_ais
 
 ```bash
 git pull
-bash deploy_telegram_bot.sh --yes
+bash deploy_telegram_bot.sh --providers all --yes
 cd /opt/marine_track
 source .venv/bin/activate
 python register_telegram_commands.py
+```
+
+Чтобы пропустить provider-пакеты при деплое:
+
+```bash
+bash deploy_telegram_bot.sh --providers core --yes
 ```
 
 При изменении системных geospatial-зависимостей:
