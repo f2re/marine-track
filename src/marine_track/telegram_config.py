@@ -18,6 +18,8 @@ class TelegramBotConfig:
     max_results: int
     max_concurrent_jobs: int
     detection_max_crops: int
+    land_mask_geojson: Path | None
+    shoreline_buffer_m: int
 
 
 def parse_admin_ids(raw: str | None) -> set[int]:
@@ -44,6 +46,11 @@ def env_int(name: str, default: int, minimum: int = 1, maximum: int = 10000) -> 
     return max(minimum, min(maximum, value))
 
 
+def env_optional_path(name: str) -> Path | None:
+    raw = os.getenv(name, "").strip()
+    return Path(raw) if raw else None
+
+
 def load_telegram_config() -> TelegramBotConfig:
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or ""
     if not token:
@@ -65,4 +72,6 @@ def load_telegram_config() -> TelegramBotConfig:
         max_results=env_int("MARINE_TRACK_MAX_RESULTS", 10, 1, 100),
         max_concurrent_jobs=env_int("MARINE_TRACK_MAX_CONCURRENT_JOBS", 1, 1, 10),
         detection_max_crops=env_int("MARINE_TRACK_DETECTION_MAX_CROPS", 10, 0, 100),
+        land_mask_geojson=env_optional_path("MARINE_TRACK_LAND_MASK_GEOJSON"),
+        shoreline_buffer_m=env_int("MARINE_TRACK_SHORELINE_BUFFER_M", 500, 0, 100_000),
     )
