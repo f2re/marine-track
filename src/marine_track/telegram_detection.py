@@ -128,7 +128,12 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
 
     status = await target.reply_text(f"⏳ Запускаю детекцию по scene token: {token}")
     try:
-        result = await asyncio.to_thread(run_detection_for_token, token, config.output_dir)
+        result = await asyncio.to_thread(
+            run_detection_for_token,
+            token,
+            config.output_dir,
+            config.detection_max_crops,
+        )
     except MaterializationError as exc:
         await status.edit_text(
             "Детекция не запущена: нет подходящего full-resolution GeoTIFF/COG asset.\n"
