@@ -119,6 +119,15 @@ def check_paths() -> list[str]:
     return errors
 
 
+def check_telegram_env() -> list[str]:
+    token = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "").strip()
+    if token:
+        return []
+    return [
+        "TELEGRAM_BOT_TOKEN is empty; set it in /opt/marine_track/.env or pass TELEGRAM_BOT_TOKEN before deploy"
+    ]
+
+
 def check_numeric_env() -> list[str]:
     errors: list[str] = []
     for name in (
@@ -140,7 +149,7 @@ def check_numeric_env() -> list[str]:
 
 def main() -> int:
     load_dotenv()
-    errors = check_imports() + check_paths() + check_numeric_env()
+    errors = check_imports() + check_paths() + check_telegram_env() + check_numeric_env()
     if errors:
         print(f"Runtime check failed (provider_profile={provider_profile()}):", file=sys.stderr)
         for error in errors:
