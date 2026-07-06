@@ -124,6 +124,23 @@ copy_project() {
   run_root chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 }
 
+sync_env_defaults() {
+  local template="$INSTALL_DIR/.env.example"
+  [[ -f "$template" && -f "$ENV_FILE" ]] || return 0
+  local added=0
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    local key="${line%%=*}"
+    if ! grep -q "^${key}=" "$ENV_FILE"; then
+      printf '\n%s\n' "$line" | run_root tee -a "$ENV_FILE" >/dev/null
+      added=$((added + 1))
+    fi
+  done < "$template"
+  [[ "$added" -gt 0 ]] && warn "added $added missing env keys to $ENV_FILE"
+  run_root chown root:"$SERVICE_USER" "$ENV_FILE"
+  run_root chmod 0640 "$ENV_FILE"
+}
+
 ensure_venv_and_deps() {
   if [[ ! -x "$VENV_DIR/bin/python" ]]; then
     run_user "$SERVICE_USER" "$PYTHON_BIN" -m venv "$VENV_DIR"
@@ -184,6 +201,7 @@ main() {
   install_system_packages
   precheck_source
   copy_project
+  sync_env_defaults
   ensure_venv_and_deps
   runtime_check
   restart_service
