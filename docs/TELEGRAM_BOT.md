@@ -33,7 +33,18 @@ Examples:
 
 `/detect` supports only full-resolution GeoTIFF/COG assets. It intentionally does not process ASF ZIP/GRD archives as rasters. If a selected scene has only preview or archive assets, the bot returns a clear error.
 
-`/detectbbox` searches only detection-capable STAC providers and filters scenes to those that expose GeoTIFF/COG assets. For Sentinel-1 this prefers Planetary Computer `sentinel-1-rtc`. The AOI geometry is persisted in `scene_registry.json`; the materializer reprojects it to the raster CRS and crops the source raster before running local CFAR detection.
+`/detectbbox` searches only detection-capable STAC providers and filters scenes to those that expose GeoTIFF/COG assets. For Sentinel-1 this prefers Planetary Computer `sentinel-1-rtc`. The AOI geometry is persisted in `scene_registry.json`; the materializer reprojects it to the raster CRS and crops the source raster before running detection.
+
+## Land and shoreline suppression
+
+Detection can optionally suppress land and a shoreline buffer before local CFAR. Set:
+
+```text
+MARINE_TRACK_LAND_MASK_GEOJSON=/opt/marine_track/data/masks/land.geojson
+MARINE_TRACK_SHORELINE_BUFFER_M=500
+```
+
+The GeoJSON must contain land polygons in EPSG:4326 lon/lat coordinates. At runtime the mask is reprojected to the raster CRS, buffered, rasterized and applied as NaN pixels before normalization and detection. If `MARINE_TRACK_LAND_MASK_GEOJSON` is empty, no land mask is applied.
 
 ## Detection output
 
@@ -46,7 +57,7 @@ MARINE_TRACK_OUTPUT_DIR/detections/<token>/detections.parquet
 MARINE_TRACK_OUTPUT_DIR/detections/<token>/report.json
 ```
 
-`report.json` contains product provenance, raster key/path, AOI crop status, detector parameters and detections.
+`report.json` contains product provenance, raster key/path, AOI crop status, land mask settings, detector parameters and detections.
 
 ## Environment
 
@@ -61,6 +72,9 @@ MARINE_TRACK_DEFAULT_SENSOR=auto
 MARINE_TRACK_DEFAULT_LOOKBACK_HOURS=72
 MARINE_TRACK_MAX_RESULTS=10
 MARINE_TRACK_MAX_CONCURRENT_JOBS=1
+MARINE_TRACK_DETECTION_MAX_CROPS=10
+MARINE_TRACK_LAND_MASK_GEOJSON=
+MARINE_TRACK_SHORELINE_BUFFER_M=500
 ```
 
 Provider variables, when needed:
@@ -113,6 +127,8 @@ git pull
 python -m pytest -q
 ruff check src tests
 bash deploy_telegram_bot.sh --yes
+cd /opt/marine_track
+source .venv/bin/activate
 python register_telegram_commands.py
 ```
 
@@ -141,4 +157,4 @@ The registry maps short tokens to full scene metadata, provider, sensor, AOI geo
 python runtime_check.py
 ```
 
-The check verifies imports, default AOI existence, output directory writability and numeric environment variables. It does not perform network calls to Sentinel providers.
+The check verifies imports, default AOI existence, optional land mask path, output directory writability and numeric environment variables. It does not perform network calls to Sentinel providers.
