@@ -24,7 +24,7 @@ class STACProvider(SceneProvider):
         with request.aoi_geojson_path.open("r", encoding="utf-8") as f:
             aoi = json.load(f)
 
-        geometry = aoi["features"][0]["geometry"] if aoi.get("type") == "FeatureCollection" else aoi["geometry"]
+        geometry = _aoi_geometry(aoi)
         interval = f"{request.start.isoformat()}/{request.end.isoformat()}"
 
         client = Client.open(self.api_url)
@@ -65,6 +65,14 @@ class STACProvider(SceneProvider):
             beam_mode=props.get("sar:instrument_mode"),
             metadata=dict(props),
         )
+
+
+def _aoi_geometry(aoi: dict[str, Any]) -> dict[str, Any]:
+    if aoi.get("type") == "FeatureCollection":
+        return aoi["features"][0]["geometry"]
+    if aoi.get("type") == "Feature":
+        return aoi["geometry"]
+    return aoi
 
 
 def _parse_polarizations(value: object) -> list[str] | None:
