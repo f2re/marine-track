@@ -241,7 +241,10 @@ PY
 set_env_from_process_if_present() {
   local key="$1"
   local value="${!key:-}"
-  [[ -n "$value" ]] && set_env_key "$key" "$value"
+  if [[ -n "$value" ]]; then
+    set_env_key "$key" "$value"
+  fi
+  return 0
 }
 
 sync_env_defaults() {
@@ -275,7 +278,10 @@ prompt_env_value() {
   else
     read -r -p "$label [$key] (Enter to skip): " value
   fi
-  [[ -n "$value" ]] && set_env_key "$key" "$value"
+  if [[ -n "$value" ]]; then
+    set_env_key "$key" "$value"
+  fi
+  return 0
 }
 
 configure_telegram_access() {
