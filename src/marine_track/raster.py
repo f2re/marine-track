@@ -61,8 +61,8 @@ def percentile_normalize(
 def iter_tiles(image: np.ndarray, tile_size: int, overlap: int = 0) -> Iterator[Tile]:
     """Yield 2D tiles with optional overlap.
 
-    Edge tiles are clipped to the image bounds. `overlap` must be smaller than
-    `tile_size` so the iterator always advances.
+    Edge starts are snapped to the final full tile origin where possible, so the
+    iterator covers the full image without producing tiny duplicate edge tiles.
     """
     if image.ndim != 2:
         raise ValueError("image must be 2D")
@@ -71,17 +71,24 @@ def iter_tiles(image: np.ndarray, tile_size: int, overlap: int = 0) -> Iterator[
     if overlap < 0 or overlap >= tile_size:
         raise ValueError("overlap must be in [0, tile_size)")
 
-    step = tile_size - overlap
     rows, cols = image.shape
-    for row in range(0, rows, step):
-        for col in range(0, cols, step):
+    for row in _tile_starts(rows, tile_size, tile_size - overlap):
+        for col in _tile_starts(cols, tile_size, tile_size - overlap):
             yield Tile(
                 data=image[row : min(row + tile_size, rows), col : min(col + tile_size, cols)],
                 row_start=row,
                 col_start=col,
             )
-        if row + tile_size >= rows:
-            break
+
+
+def _tile_starts(length: int, tile_size: int, step: int) -> list[int]:
+    if length <= tile_size:
+        return [0]
+    last = length - tile_size
+    starts = list(range(0, last + 1, step))
+    if starts[-1] != last:
+        starts.append(last)
+    return starts
 
 
 def finite_fraction(image: np.ndarray) -> float:
