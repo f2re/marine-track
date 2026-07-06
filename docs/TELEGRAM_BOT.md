@@ -35,6 +35,28 @@ Examples:
 
 `/detectbbox` searches only detection-capable STAC providers and filters scenes to those that expose GeoTIFF/COG assets. For Sentinel-1 this prefers Planetary Computer `sentinel-1-rtc`. The AOI geometry is persisted in `scene_registry.json`; the materializer reprojects it to the raster CRS and crops the source raster before running detection.
 
+## Provider dependency profiles
+
+Install/deploy can install all provider packages or skip them:
+
+```bash
+bash install_telegram_bot.sh --providers all --yes
+bash deploy_telegram_bot.sh --providers all --yes
+bash deploy_telegram_bot.sh --providers core --yes
+```
+
+Profiles:
+
+```text
+all    = core + scene providers + auxiliary providers
+scene  = core + ASF/STAC/Planetary Computer/Sentinel Hub
+aux    = core + Copernicus Marine
+core   = only core package; provider packages are skipped
+none   = alias for core
+```
+
+The selected profile is written to `.env` as `MARINE_TRACK_PROVIDER_PROFILE`. `runtime_check.py` reads it and validates only the selected provider package set. This allows a core-only deployment to start without `asf-search`, `sentinelhub`, `planetary-computer`, `pystac-client` or `copernicusmarine` installed.
+
 ## Land and shoreline suppression
 
 Detection can optionally suppress land and a shoreline buffer before local CFAR. Set:
@@ -72,6 +94,7 @@ MARINE_TRACK_DEFAULT_SENSOR=auto
 MARINE_TRACK_DEFAULT_LOOKBACK_HOURS=72
 MARINE_TRACK_MAX_RESULTS=10
 MARINE_TRACK_MAX_CONCURRENT_JOBS=1
+MARINE_TRACK_PROVIDER_PROFILE=all
 MARINE_TRACK_DETECTION_MAX_CROPS=10
 MARINE_TRACK_LAND_MASK_GEOJSON=
 MARINE_TRACK_SHORELINE_BUFFER_M=500
@@ -83,16 +106,19 @@ Provider variables, when needed:
 EARTHDATA_USERNAME=
 EARTHDATA_PASSWORD=
 EARTHDATA_TOKEN=
-CDSE_CLIENT_ID=
+CDSE_ACCESS_TOKEN=
+CDSE_CLIENT_ID=cdse-public
 CDSE_CLIENT_SECRET=
 CDSE_USERNAME=
 CDSE_PASSWORD=
+SENTINELHUB_ACCESS_TOKEN=
 SENTINELHUB_CLIENT_ID=
 SENTINELHUB_CLIENT_SECRET=
 COPERNICUSMARINE_SERVICE_USERNAME=
 COPERNICUSMARINE_SERVICE_PASSWORD=
-GFW_API_TOKEN=
-AISHUB_API_KEY=
+MARINE_TRACK_AIS_CSV=
+NOAA_MARINECADASTRE_BASE_URL=
+NOAA_MARINECADASTRE_CACHE_DIR=runs/noaa_ais
 ```
 
 If `TELEGRAM_ADMIN_IDS` is empty, operational commands are open to all users. If it is set, only those numeric Telegram ids can run them. Use `/whoami` to get the id.
@@ -102,8 +128,10 @@ If `TELEGRAM_ADMIN_IDS` is empty, operational commands are open to all users. If
 From repository root:
 
 ```bash
-TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-id>' bash install_telegram_bot.sh --yes
+TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-id>' bash install_telegram_bot.sh --providers all --yes
 ```
+
+Use `--providers core` to install only the bot/core detector without external provider packages.
 
 Default paths:
 
@@ -126,7 +154,7 @@ sudo journalctl -u marine-track-bot.service -n 100 --no-pager
 git pull
 python -m pytest -q
 ruff check src tests
-bash deploy_telegram_bot.sh --yes
+bash deploy_telegram_bot.sh --providers all --yes
 cd /opt/marine_track
 source .venv/bin/activate
 python register_telegram_commands.py
@@ -135,10 +163,10 @@ python register_telegram_commands.py
 With system package refresh:
 
 ```bash
-bash deploy_telegram_bot.sh --install-system-packages --yes
+bash deploy_telegram_bot.sh --install-system-packages --providers all --yes
 ```
 
-Deploy keeps installed `.env` and `runs/` intact, syncs code to `/opt/marine_track`, updates the virtual environment, runs `runtime_check.py`, restarts the service and tries to register slash commands.
+Deploy keeps installed `.env` and `runs/` intact, syncs code to `/opt/marine_track`, adds missing `.env.example` keys without overwriting existing values, updates the virtual environment according to provider profile, runs `runtime_check.py`, restarts the service and tries to register slash commands.
 
 ## Scene registry
 
@@ -154,7 +182,8 @@ The registry maps short tokens to full scene metadata, provider, sensor, AOI geo
 ## Runtime check
 
 ```bash
-python runtime_check.py
+MARINE_TRACK_PROVIDER_PROFILE=all python runtime_check.py
+MARINE_TRACK_PROVIDER_PROFILE=core python runtime_check.py
 ```
 
-The check verifies imports, default AOI existence, optional land mask path, output directory writability and numeric environment variables. It does not perform network calls to Sentinel providers.
+The check verifies imports for the selected provider profile, default AOI existence, optional land mask path, output directory writability and numeric environment variables. It does not perform network calls to Sentinel providers.
