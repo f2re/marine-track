@@ -14,6 +14,8 @@ AOI или bbox → поиск Sentinel-сцен → выбор срока → G
 - Slash-команды `/dates`, `/bboxdates`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
 - Поиск доступных сроков снимков за последние 12 часов по AOI или bbox.
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
+- Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
+- Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
 - Detection-aware поиск сцен: STAC-провайдеры фильтруются по наличию GeoTIFF/COG assets.
 - Для Sentinel-1 `/detectbbox` предпочитает Planetary Computer `sentinel-1-rtc`.
 - Materializer выбирает full-resolution GeoTIFF/COG asset, подписывает Planetary Computer URL при возможности и вырезает AOI.
@@ -141,22 +143,40 @@ MARINE_TRACK_SHORELINE_BUFFER_M=500
 
 `MARINE_TRACK_LAND_MASK_GEOJSON` должен указывать на GeoJSON с полигонами суши в EPSG:4326. Маска перепроецируется в CRS растра, буферизуется на `MARINE_TRACK_SHORELINE_BUFFER_M` метров и применяется до local CFAR.
 
-Для Sentinel/провайдеров при необходимости:
+## Провайдеры и доступы
+
+Полный аудит провайдеров и инструкция по получению/настройке доступов: `docs/PROVIDERS.md`.
+
+Кратко:
 
 ```text
+ASF / Earthdata:
 EARTHDATA_USERNAME=
 EARTHDATA_PASSWORD=
 EARTHDATA_TOKEN=
-CDSE_CLIENT_ID=
-CDSE_CLIENT_SECRET=
+
+Copernicus Data Space Ecosystem:
+CDSE_ACCESS_TOKEN=
 CDSE_USERNAME=
 CDSE_PASSWORD=
+CDSE_CLIENT_ID=cdse-public
+CDSE_CLIENT_SECRET=
+
+Sentinel Hub:
+SENTINELHUB_ACCESS_TOKEN=
 SENTINELHUB_CLIENT_ID=
 SENTINELHUB_CLIENT_SECRET=
+SENTINELHUB_TOKEN_URL=https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token
+SENTINELHUB_CATALOG_URL=https://services.sentinel-hub.com/api/v1/catalog/1.0.0/search
+
+Copernicus Marine:
 COPERNICUSMARINE_SERVICE_USERNAME=
 COPERNICUSMARINE_SERVICE_PASSWORD=
-GFW_API_TOKEN=
-AISHUB_API_KEY=
+
+AIS / track validation:
+MARINE_TRACK_AIS_CSV=
+NOAA_MARINECADASTRE_BASE_URL=
+NOAA_MARINECADASTRE_CACHE_DIR=runs/noaa_ais
 ```
 
 `/detectbbox` сначала опирается на STAC/COG источники. Для Planetary Computer assets используется `planetary-computer` signing, если библиотека доступна.
