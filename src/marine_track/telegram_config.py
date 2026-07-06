@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from marine_track.models import Sensor
+
+
+@dataclass(frozen=True)
+class TelegramBotConfig:
+    token: str
+    admin_ids: set[int]
+    default_aoi: Path
+    output_dir: Path
+    default_sensor: Sensor
+    default_lookback_hours: int
+    max_results: int
+    max_concurrent_jobs: int
+
+
+def parse_admin_ids(raw: str | None) -> set[int]:
+    ids: set[int] = set()
+    if not raw:
+        return ids
+    for part in raw.replace(";", ",").replace(" ", ",").split(","):
+        value = part.strip()
+        if not value:
+            continue
+        try:
+            ids.add(int(value))
+        except ValueError:
+            continue
+    return ids
+
+
+def env_int(name: str, default: int, minimum: int = 1, maximum: int = 10000) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def load_telegram_config() -> TelegramBotConfig:
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or ""
+    if not token:
+        raise RuntimeError("Нужно задать TELEGRAM_BOT_TOKEN или BOT_TOKEN")
+
+    sensor_raw = os.getenv("MARINE_TRACK_DEFAULT_SENSOR", Sensor.AUTO.value).strip().lower()
+    try:
+        default_sensor = Sensor(sensor_raw)
+    except ValueError:
+        default_sensor = Sensor.AUTO
+
+    return TelegramBotConfig(
+        token=token,
+        admin_ids=parse_admin_ids(os.getenv("TELEGRAM_ADMIN_IDS")),
+        default_aoi=Path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson")),
+        output_dir=Path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram")),
+        default_sensor=default_sensor,
+        default_lookback_hours=env_int("MARINE_TRACK_DEFAULT_LOOKBACK_HOURS", 72, 1, 24 * 30),
+        max_results=env_int("MARINE_TRACK_MAX_RESULTS", 10, 1, 100),
+        max_concurrent_jobs=env_int("MARINE_TRACK_MAX_CONCURRENT_JOBS", 1, 1, 10),
+    )
