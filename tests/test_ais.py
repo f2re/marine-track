@@ -19,7 +19,8 @@ def test_interpolate_track_position_midpoint():
             "lat": [44.0, 44.0],
         }
     )
-    point = interpolate_track_position(df, datetime(2026, 7, 1, 0, 5, tzinfo=timezone.utc))
+    target = datetime(2026, 7, 1, 0, 5, tzinfo=timezone.utc)
+    point = interpolate_track_position(df, target)
     assert point is not None
     assert point.lon == pytest.approx(37.05)
     assert point.lat == pytest.approx(44.0)
