@@ -2,34 +2,36 @@
 
 Marine Track — MVP-система для поиска спутниковых сцен по акватории и первичной детекции судов с отправкой результатов в Telegram.
 
-Текущий фокус проекта: не обучать нейросеть преждевременно, а собрать воспроизводимый pipeline:
+Текущий pipeline:
 
 ```text
 AOI или bbox → кешированный поиск Sentinel-сцен → выбор срока → кешированный GeoTIFF/COG asset → AOI crop → land/shoreline mask → local CFAR detector → обзорный PNG → crop судов → GeoJSON/CSV/Parquet/report.json → Telegram
 ```
 
+## Основное правило установки
+
+В проекте поддерживаются только два эксплуатационных shell-скрипта:
+
+```bash
+bash install_telegram_bot.sh --providers all
+bash deploy_telegram_bot.sh --providers all
+```
+
+Все прежние wrapper/fix/helper scripts выведены из эксплуатации. Их логика встроена в `deploy_telegram_bot.sh`: запрос Telegram/provider-доступов, установка provider extras, Telegram `getMe` healthcheck, provider preflight, одноразовая подготовка land mask, cleanup, регистрация Telegram-команд и рестарт systemd.
+
 ## Что уже реализовано
 
 - Telegram bot `marine-track-bot`.
 - Slash-команды `/dates`, `/bboxdates`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
-- Поиск доступных сроков снимков за последние 12 часов по AOI или bbox.
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
 - Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
 - Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
-- Provider-aware install/deploy wrappers: установка provider extras, интерактивный запрос ключей, preflight-проверка.
-- Cache-aware install/deploy wrappers: одноразовая подготовка land mask, cleanup по retention, перезапуск сервиса после подготовки кешей.
+- Provider profiles: `all`, `scene`, `aux`, `core`, `none`.
 - TTL-кеш scene-search, чтобы минимизировать STAC/provider API calls.
 - Общий raster cache: один и тот же product/asset/AOI не скачивается повторно.
-- Автоматическая сборка land/shoreline mask из URL или локального ZIP/SHP/GeoJSON через `marine-track update-land-mask` и `deploy_prepare.py`.
-- Detection-aware поиск сцен: STAC-провайдеры фильтруются по наличию GeoTIFF/COG assets.
-- Для Sentinel-1 `/detectbbox` предпочитает Planetary Computer `sentinel-1-rtc`.
-- Materializer выбирает full-resolution GeoTIFF/COG asset, подписывает Planetary Computer URL при возможности и вырезает AOI.
-- Опциональная land/shoreline mask по GeoJSON полигонам суши в EPSG:4326.
+- Автоматическая сборка land/shoreline mask из URL или локального ZIP/SHP/GeoJSON.
 - Local-CFAR style detector для bright compact targets.
-- Overview PNG с точками/номерами судов.
-- Crop PNG по каждому найденному судну.
-- Вывод GeoJSON, CSV, Parquet и `report.json`.
-- Install/deploy scripts для systemd-сервиса.
+- Overview PNG, crop PNG, GeoJSON, CSV, Parquet и `report.json`.
 
 ## Что пока не реализовано
 
@@ -37,84 +39,20 @@ AOI или bbox → кешированный поиск Sentinel-сцен → в
 - Wake association вокруг каждого судна.
 - Heading/speed enrichment из wake geometry.
 - AIS track rendering на crop.
-- Обработка ASF ZIP/GRD через SNAP/pyroSAR. Сейчас такие assets намеренно не обрабатываются как GeoTIFF.
+- Обработка ASF ZIP/GRD через SNAP/pyroSAR.
 
-## Быстрый старт для разработки
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-python -m pytest -q
-ruff check src tests
-```
-
-С provider-пакетами для разработки:
-
-```bash
-pip install -e .[providers,dev]
-python runtime_check.py
-python provider_preflight.py
-```
-
-CLI:
-
-```bash
-marine-track --help
-marine-track run \
-  --aoi data/aoi/example_black_sea.geojson \
-  --from 2026-07-01T00:00:00Z \
-  --to 2026-07-06T00:00:00Z \
-  --sensor auto \
-  --output runs/black_sea_20260706
-```
-
-## Telegram bot
-
-Основные команды:
-
-```text
-/dates [auto|sentinel1|sentinel2] [hours]
-/bboxdates [auto|sentinel1|sentinel2] west south east north [hours]
-/image token
-/detect token
-/detectbbox [auto|sentinel1|sentinel2] west south east north [hours]
-/status
-/whoami
-```
-
-Примеры:
-
-```text
-/dates sentinel1 12
-/bboxdates sentinel1 36.5 43.8 38.5 45.0 12
-/detect <token из /dates или /bboxdates>
-/detectbbox sentinel1 36.5 43.8 38.5 45.0 12
-```
-
-`/detectbbox` — основной быстрый сценарий: найти свежую detection-capable сцену по bbox, сохранить token, вырезать AOI, запустить detector и отправить результаты. В сообщениях показывается `search_cache: hit/refresh` и `raster_cache: hit/created`.
-
-## Установка Telegram bot на сервер
-
-1. Склонировать репозиторий:
+## Установка на сервер
 
 ```bash
 git clone https://github.com/f2re/marine-track.git
 cd marine-track
+TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_telegram_bot.sh --providers all --yes
 ```
 
-2. Создать бота через BotFather и получить Telegram token.
-
-3. Установить сервис через cache-aware wrapper. Без `--yes` скрипт интерактивно запросит ключи активных провайдеров и покажет краткие инструкции, где их получить. После установки он один раз соберет land mask, если она еще не существует, выполнит cleanup и запустит сервис:
+Интерактивно, с запросом Telegram token и provider-доступов:
 
 ```bash
-TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_with_cache.sh --providers all
-```
-
-Для полностью неинтерактивной установки ключи надо заранее передать через окружение или потом заполнить `/opt/marine_track/.env`; в этом режиме preflight покажет недостающие доступы:
-
-```bash
-TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_with_cache.sh --providers all --yes
+bash install_telegram_bot.sh --providers all
 ```
 
 Профили provider-зависимостей:
@@ -127,21 +65,7 @@ core   = только core; provider-пакеты не ставятся
 none   = alias для core
 ```
 
-Примеры:
-
-```bash
-bash install_with_cache.sh --providers scene
-bash install_with_cache.sh --providers core --yes
-```
-
-По умолчанию используется:
-
-```text
-/opt/marine_track
-/etc/systemd/system/marine-track-bot.service
-```
-
-4. Проверить статус:
+Проверка статуса:
 
 ```bash
 bash install_telegram_bot.sh --status
@@ -149,11 +73,58 @@ sudo systemctl status marine-track-bot.service --no-pager
 sudo journalctl -u marine-track-bot.service -n 100 --no-pager
 ```
 
-## Настройка `.env`
+## Деплой после `git pull`
 
-Шаблон: `.env.example`.
+```bash
+git pull
+bash deploy_telegram_bot.sh --providers all --yes
+```
 
-Минимум для Telegram:
+Интерактивный деплой с запросом новых/пустых доступов:
+
+```bash
+git pull
+bash deploy_telegram_bot.sh --providers all
+```
+
+При изменении системных geospatial-зависимостей:
+
+```bash
+bash deploy_telegram_bot.sh --install-system-packages --providers all --yes
+```
+
+Чтобы пропустить provider-пакеты:
+
+```bash
+bash deploy_telegram_bot.sh --providers core --yes
+```
+
+## Что делает `deploy_telegram_bot.sh`
+
+1. Копирует текущий checkout в `/opt/marine_track`, не перетирая `.env`, `.venv` и `runs`.
+2. Синхронизирует новые ключи из `.env.example` в `/opt/marine_track/.env`.
+3. Запрашивает или принимает через environment `TELEGRAM_BOT_TOKEN` и `TELEGRAM_ADMIN_IDS`.
+4. Запрашивает provider-доступы для активного профиля.
+5. Ставит пакет с нужными extras: `.[providers]`, `.[scene-providers]`, `.[aux-providers]` или core.
+6. Один раз собирает land mask, если `MARINE_TRACK_AUTO_UPDATE_LAND_MASK=1`, mask-файл отсутствует и `MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0`.
+7. Выполняет cleanup старых кешей/output-файлов по retention.
+8. Запускает `runtime_check.py`.
+9. Проверяет Telegram token через `getMe`.
+10. Выполняет provider preflight без сетевых запросов.
+11. Регистрирует Telegram-команды.
+12. Перезапускает `marine-track-bot.service`.
+
+Если `TELEGRAM_BOT_TOKEN` пустой или неверный, deploy падает до рестарта сервиса.
+
+## `.env`
+
+Ожидаемые права:
+
+```text
+/opt/marine_track/.env  root:marinetrack 0640
+```
+
+Минимум:
 
 ```text
 TELEGRAM_BOT_TOKEN=
@@ -168,8 +139,6 @@ MARINE_TRACK_PROVIDER_PROFILE=all
 MARINE_TRACK_DETECTION_MAX_CROPS=10
 ```
 
-`MARINE_TRACK_PROVIDER_PROFILE` синхронизируется install/deploy-скриптами и управляет тем, какие provider modules проверяет `runtime_check.py`.
-
 ## Cache policy
 
 ```text
@@ -183,11 +152,9 @@ MARINE_TRACK_RUN_OUTPUT_RETENTION_DAYS=7
 MARINE_TRACK_CLEANUP_ON_DEPLOY=1
 ```
 
-Логика:
+`scene_search` cache хранит результат поиска scenes по AOI/sensor/lookback/max_results. Пока TTL не истек, `/detectbbox` не делает новый provider API call. После TTL выполняется refresh и появляется шанс поймать новый снимок.
 
-- `scene_search` cache хранит результат поиска scenes по AOI/sensor/lookback/max_results. Пока TTL не истек, `/detectbbox` не делает новый provider API call. После TTL выполняется refresh и появляется шанс поймать новый снимок.
-- `raster` cache хранит скачанный или AOI-cropped GeoTIFF по ключу provider/product/asset/AOI. Повторная детекция того же снимка и района использует локальный файл.
-- старые search-cache, raster-cache, mask-cache и detection outputs удаляются по retention во время `deploy_prepare.py` или вручную через CLI.
+`raster` cache хранит скачанный или AOI-cropped GeoTIFF по ключу provider/product/asset/AOI. Повторная детекция того же снимка и района использует локальный файл.
 
 Ручная очистка:
 
@@ -199,7 +166,18 @@ marine-track cleanup-cache
 
 ## Land/shoreline mask
 
-Для подавления береговых ложных целей нужен GeoJSON с полигонами суши в EPSG:4326. При `install_with_cache.sh` и `deploy_with_cache.sh` маска скачивается и собирается один раз: если `MARINE_TRACK_LAND_MASK_GEOJSON` уже существует и `MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0`, повторного download не будет.
+При `install_telegram_bot.sh` и `deploy_telegram_bot.sh` маска собирается один раз: если `MARINE_TRACK_LAND_MASK_GEOJSON` уже существует и `MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0`, повторного download не будет.
+
+Настройки:
+
+```text
+MARINE_TRACK_LAND_MASK_GEOJSON=/opt/marine_track/data/masks/land.geojson
+MARINE_TRACK_SHORELINE_BUFFER_M=500
+MARINE_TRACK_AUTO_UPDATE_LAND_MASK=1
+MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0
+MARINE_TRACK_LAND_MASK_SOURCE_URL=https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_land.zip
+MARINE_TRACK_LAND_MASK_CACHE_DIR=data/masks/cache
+```
 
 Ручная сборка:
 
@@ -213,111 +191,21 @@ marine-track update-land-mask \
   --force
 ```
 
-Настройки:
+## Telegram bot
+
+Команды:
 
 ```text
-MARINE_TRACK_LAND_MASK_GEOJSON=/opt/marine_track/data/masks/land.geojson
-MARINE_TRACK_SHORELINE_BUFFER_M=500
-MARINE_TRACK_AUTO_UPDATE_LAND_MASK=1
-MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0
-MARINE_TRACK_LAND_MASK_SOURCE_URL=https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_land.zip
-MARINE_TRACK_LAND_MASK_CACHE_DIR=data/masks/cache
+/dates [auto|sentinel1|sentinel2] [hours]
+/bboxdates [auto|sentinel1|sentinel2] west south east north [hours]
+/image token
+/detect token
+/detectbbox [auto|sentinel1|sentinel2] west south east north [hours]
+/status
+/whoami
 ```
 
-`MARINE_TRACK_LAND_MASK_SOURCE_URL` можно заменить на локальный ZIP/SHP/GeoJSON или собственное зеркало. Маска перепроецируется в CRS растра, буферизуется на `MARINE_TRACK_SHORELINE_BUFFER_M` метров и применяется до local CFAR.
-
-## Провайдеры и доступы
-
-Полный аудит провайдеров и инструкция по получению/настройке доступов: `docs/PROVIDERS.md`.
-
-Ключи активных провайдеров можно запросить отдельно:
-
-```bash
-sudo python3 /opt/marine_track/provider_configure.py --env-file /opt/marine_track/.env --profile all
-sudo -u marinetrack /opt/marine_track/.venv/bin/python /opt/marine_track/provider_preflight.py
-```
-
-Кратко:
-
-```text
-ASF / Earthdata:
-EARTHDATA_USERNAME=
-EARTHDATA_PASSWORD=
-EARTHDATA_TOKEN=
-
-Copernicus Data Space Ecosystem:
-CDSE_ACCESS_TOKEN=
-CDSE_USERNAME=
-CDSE_PASSWORD=
-CDSE_CLIENT_ID=cdse-public
-CDSE_CLIENT_SECRET=
-
-Sentinel Hub:
-SENTINELHUB_ACCESS_TOKEN=
-SENTINELHUB_CLIENT_ID=
-SENTINELHUB_CLIENT_SECRET=
-SENTINELHUB_TOKEN_URL=https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token
-SENTINELHUB_CATALOG_URL=https://services.sentinel-hub.com/api/v1/catalog/1.0.0/search
-
-Copernicus Marine:
-COPERNICUSMARINE_SERVICE_USERNAME=
-COPERNICUSMARINE_SERVICE_PASSWORD=
-
-AIS / track validation:
-MARINE_TRACK_AIS_CSV=
-NOAA_MARINECADASTRE_BASE_URL=
-NOAA_MARINECADASTRE_CACHE_DIR=runs/noaa_ais
-```
-
-`/detectbbox` сначала опирается на STAC/COG источники. Для Planetary Computer assets используется `planetary-computer` signing, если библиотека доступна.
-
-## Обновление после `git pull`
-
-Интерактивный деплой с запросом новых/пустых provider-доступов, одноразовой подготовкой маски и cleanup:
-
-```bash
-git pull
-bash deploy_with_cache.sh --providers all
-```
-
-Неинтерактивный деплой:
-
-```bash
-git pull
-bash deploy_with_cache.sh --providers all --yes
-```
-
-Чтобы пропустить provider-пакеты при деплое:
-
-```bash
-bash deploy_with_cache.sh --providers core --yes
-```
-
-При изменении системных geospatial-зависимостей сначала обновите системные пакеты базовым deploy:
-
-```bash
-bash deploy_telegram_bot.sh --install-system-packages --yes --no-restart
-bash deploy_with_cache.sh --providers all
-```
-
-## Восстановление прав `.env`
-
-Если при установке или деплое появились строки вида `grep: /opt/marine_track/.env: Permission denied`, обновите код и запустите repair helper:
-
-```bash
-cd /path/to/marine-track
-git pull
-bash repair_env_permissions.sh
-bash deploy_with_cache.sh --providers all --yes
-```
-
-Ожидаемые права:
-
-```text
-/opt/marine_track/.env  root:marinetrack 0640
-```
-
-Базовые install/deploy scripts читают защищенный `.env` через `sudo`, поэтому обычный пользователь больше не должен получать `grep Permission denied`.
+`/detectbbox` показывает `search_cache: hit/refresh`, а итоговая детекция показывает `raster_cache: hit/created`.
 
 ## Выходные файлы детекции
 
@@ -329,8 +217,6 @@ MARINE_TRACK_OUTPUT_DIR/detections/<token>/detections.csv
 MARINE_TRACK_OUTPUT_DIR/detections/<token>/detections.parquet
 MARINE_TRACK_OUTPUT_DIR/detections/<token>/report.json
 ```
-
-`report.json` содержит параметры detector-а, land mask settings, raster key, raster cache status, product id, acquisition time, число детекций, paths crop-файлов и provenance.
 
 ## Текущий план реализации
 
