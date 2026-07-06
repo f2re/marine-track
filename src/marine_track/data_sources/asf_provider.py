@@ -27,7 +27,8 @@ class ASFProvider(SceneProvider):
 
         with request.aoi_geojson_path.open("r", encoding="utf-8") as f:
             aoi = json.load(f)
-        geom = shape(aoi["features"][0]["geometry"] if aoi.get("type") == "FeatureCollection" else aoi["geometry"])
+        geometry = aoi["features"][0]["geometry"] if aoi.get("type") == "FeatureCollection" else aoi["geometry"]
+        geom = shape(geometry)
 
         results = asf.geo_search(
             platform=[asf.PLATFORM.SENTINEL1],
