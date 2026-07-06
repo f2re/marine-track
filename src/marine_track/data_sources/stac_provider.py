@@ -45,18 +45,36 @@ class STACProvider(SceneProvider):
             acquisition_time = datetime.fromisoformat(dt.replace("Z", "+00:00"))
         else:
             acquisition_time = item.datetime
+
+        assets: dict[str, str] = {}
+        for key, asset in item.assets.items():
+            href = getattr(asset, "href", None)
+            if href:
+                assets[key] = href
+
         return Scene(
             provider=self.name,
             sensor=sensor,
             product_id=item.id,
             acquisition_time=acquisition_time,
             footprint_wkt=None,
-            download_url=None,
+            download_url=next(iter(assets.values()), None),
+            assets=assets,
             cloud_cover=props.get("eo:cloud_cover"),
-            polarization=props.get("sar:polarizations"),
+            polarizations=_parse_polarizations(props.get("sar:polarizations")),
             beam_mode=props.get("sar:instrument_mode"),
             metadata=dict(props),
         )
+
+
+def _parse_polarizations(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        return [part.strip() for part in value.replace("+", ",").split(",") if part.strip()]
+    return [str(value)]
 
 
 def default_stac_providers() -> list[STACProvider]:
