@@ -33,6 +33,7 @@ REQUIRED_MODULES = (
     "marine_track.detection_pipeline",
     "marine_track.detection_scene_search",
     "marine_track.scene_materializer",
+    "marine_track.land_mask",
 )
 
 
@@ -56,6 +57,9 @@ def check_paths() -> list[str]:
     aoi = project_path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson"))
     if not aoi.is_file():
         errors.append(f"default AOI not found: {aoi}")
+    land_mask = os.getenv("MARINE_TRACK_LAND_MASK_GEOJSON", "").strip()
+    if land_mask and not project_path(land_mask).is_file():
+        errors.append(f"land mask GeoJSON not found: {project_path(land_mask)}")
     out_dir = project_path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram"))
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -74,6 +78,7 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_MAX_RESULTS",
         "MARINE_TRACK_MAX_CONCURRENT_JOBS",
         "MARINE_TRACK_DETECTION_MAX_CROPS",
+        "MARINE_TRACK_SHORELINE_BUFFER_M",
     ):
         raw = os.getenv(name)
         if raw is None:
