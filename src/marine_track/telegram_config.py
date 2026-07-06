@@ -17,6 +17,7 @@ class TelegramBotConfig:
     default_lookback_hours: int
     max_results: int
     max_concurrent_jobs: int
+    detection_max_crops: int
 
 
 def parse_admin_ids(raw: str | None) -> set[int]:
@@ -63,4 +64,5 @@ def load_telegram_config() -> TelegramBotConfig:
         default_lookback_hours=env_int("MARINE_TRACK_DEFAULT_LOOKBACK_HOURS", 72, 1, 24 * 30),
         max_results=env_int("MARINE_TRACK_MAX_RESULTS", 10, 1, 100),
         max_concurrent_jobs=env_int("MARINE_TRACK_MAX_CONCURRENT_JOBS", 1, 1, 10),
+        detection_max_crops=env_int("MARINE_TRACK_DETECTION_MAX_CROPS", 10, 0, 100),
     )
