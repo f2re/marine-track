@@ -2,14 +2,13 @@ import pytest
 
 from marine_track.estimation import (
     LonLat,
-    angular_difference_deg,
     bearing_deg,
     haversine_distance_m,
     reciprocal_heading_deg,
     speed_from_displacement,
     speed_from_kelvin_wavelength,
 )
-from marine_track.validation import angular_difference_deg as validation_angle_diff
+from marine_track.validation import angular_difference_deg
 
 
 def test_speed_from_displacement():
@@ -38,4 +37,4 @@ def test_bearing_and_distance():
 
 def test_angular_difference_wrap():
     assert angular_difference_deg(350, 10) == pytest.approx(20)
-    assert validation_angle_diff(10, 350) == pytest.approx(20)
+    assert angular_difference_deg(10, 350) == pytest.approx(20)
