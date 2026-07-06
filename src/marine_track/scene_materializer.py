@@ -164,11 +164,11 @@ def crop_raster_to_aoi(href: str, target: Path, aoi_geojson: dict[str, object]) 
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise MaterializationError("rasterio is required for AOI crop") from exc
 
-    geometries = extract_geometries(aoi_geojson)
-    if not geometries:
-        raise MaterializationError("AOI GeoJSON does not contain geometries")
     try:
         with rasterio.open(href) as dataset:
+            geometries = extract_geometries(aoi_geojson, target_crs=dataset.crs)
+            if not geometries:
+                raise MaterializationError("AOI GeoJSON does not contain geometries")
             data, transform = mask(dataset, geometries, crop=True, filled=True)
             profile = dataset.profile.copy()
             profile.update(
@@ -182,13 +182,25 @@ def crop_raster_to_aoi(href: str, target: Path, aoi_geojson: dict[str, object]) 
             )
             with rasterio.open(target, "w", **profile) as output:
                 output.write(data)
+    except MaterializationError:
+        raise
     except Exception as exc:
         raise MaterializationError(f"Failed to crop raster to AOI: {exc}") from exc
     if not target.is_file() or target.stat().st_size == 0:
         raise MaterializationError("AOI crop produced empty raster")
 
 
-def extract_geometries(aoi_geojson: dict[str, object]) -> list[dict[str, object]]:
+def extract_geometries(
+    aoi_geojson: dict[str, object],
+    target_crs: object | None = None,
+) -> list[dict[str, object]]:
+    geometries = raw_geometries(aoi_geojson)
+    if not geometries:
+        return []
+    return transform_geometries_to_crs(geometries, target_crs)
+
+
+def raw_geometries(aoi_geojson: dict[str, object]) -> list[dict[str, object]]:
     geo_type = aoi_geojson.get("type")
     if geo_type == "FeatureCollection":
         features = aoi_geojson.get("features") or []
@@ -199,6 +211,26 @@ def extract_geometries(aoi_geojson: dict[str, object]) -> list[dict[str, object]
     if isinstance(geo_type, str):
         return [aoi_geojson]
     return []
+
+
+def transform_geometries_to_crs(
+    geometries: list[dict[str, object]],
+    target_crs: object | None,
+) -> list[dict[str, object]]:
+    if target_crs is None:
+        return geometries
+    try:
+        from pyproj import CRS, Transformer
+        from shapely.geometry import mapping, shape
+        from shapely.ops import transform
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise MaterializationError("pyproj and shapely are required for AOI reprojection") from exc
+
+    dst_crs = CRS.from_user_input(target_crs)
+    if dst_crs.to_epsg() == 4326:
+        return geometries
+    transformer = Transformer.from_crs("EPSG:4326", dst_crs, always_xy=True)
+    return [mapping(transform(transformer.transform, shape(geometry))) for geometry in geometries]
 
 
 def download_url(url: str, target: Path) -> None:
