@@ -15,11 +15,13 @@ from marine_track.telegram_scene_browser import (
     bbox_geojson,
     parse_scene_hours,
     parse_scene_sensor,
+    read_geojson,
     register_scenes,
     run_dir,
     utc_window,
     write_temp_aoi,
 )
+from marine_track.telegram_ui import main_menu_markup
 
 DETECT_CALLBACK_PREFIX = "mtdetect"
 
@@ -31,10 +33,68 @@ async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE, con
     args = list(context.args or [])
     if not args:
         await message.reply_text(
-            "Формат: /detect <token>. Token берется из /dates или /bboxdates."
+            "Формат: /detect <token>. Проще: нажмите 🔎 у найденной сцены или используйте /detectbbox.",
+            reply_markup=main_menu_markup(),
         )
         return
     await send_detection_by_token(update, args[0].strip(), config)
+
+
+async def detect_default_aoi(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
+    target = update.effective_message or (update.callback_query.message if update.callback_query else None)
+    if not target:
+        return
+    if not config.default_aoi.is_file():
+        await target.reply_text(
+            f"AOI не найден: {config.default_aoi}\nПроверьте MARINE_TRACK_DEFAULT_AOI.",
+            reply_markup=main_menu_markup(),
+        )
+        return
+    hours = config.default_lookback_hours
+    sensor = config.default_sensor
+    aoi_geojson = read_geojson(config.default_aoi)
+    start, end = utc_window(hours)
+    search_dir = run_dir(config.output_dir, "detect_default")
+    status = await target.reply_text(
+        "⏳ Ищу свежую сцену для детекции по default AOI\n"
+        f"sensor={sensor.value}, период={hours} ч"
+    )
+    try:
+        result = await asyncio.to_thread(
+            search_detection_capable_scenes,
+            config.default_aoi,
+            start,
+            end,
+            sensor,
+            search_dir,
+            config.max_results,
+        )
+        tokens = register_scenes(
+            config.output_dir,
+            result.provider,
+            result.sensor,
+            result.scenes,
+            result.scenes_json,
+            result.asset_manifest,
+            aoi_geojson=aoi_geojson,
+        )
+    except Exception as exc:
+        await status.edit_text(f"Не удалось найти сцену для детекции: {exc}")
+        return
+    if not tokens:
+        await status.edit_text("Нет сцен с GeoTIFF/COG assets для детекции.")
+        return
+    scene = result.scenes[0]
+    cache_status = "hit" if result.cache_hit else "refresh"
+    await status.edit_text(
+        "✅ Сцена выбрана, запускаю детекцию\n"
+        f"provider: {result.provider}\n"
+        f"sensor: {result.sensor.value}\n"
+        f"search_cache: {cache_status}\n"
+        f"time: {scene.acquisition_time.isoformat()}\n"
+        f"product: {scene.product_id[:100]}"
+    )
+    await send_detection_by_token(update, tokens[0], config)
 
 
 async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
@@ -45,7 +105,8 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if len(args) < 5:
         await message.reply_text(
             "Формат: /detectbbox [auto|sentinel1|sentinel2] west south east north [hours]\n"
-            "Пример: /detectbbox sentinel1 36.5 43.8 38.5 45.0 12"
+            "Пример: /detectbbox sentinel1 36.5 43.8 38.5 45.0 12",
+            reply_markup=main_menu_markup(),
         )
         return
     try:
@@ -55,13 +116,13 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         aoi_geojson = bbox_geojson(west, south, east, north)
         aoi_path = write_temp_aoi(aoi_geojson)
     except ValueError as exc:
-        await message.reply_text(f"Ошибка: {exc}")
+        await message.reply_text(f"Ошибка: {exc}", reply_markup=main_menu_markup())
         return
 
     start, end = utc_window(hours)
     search_dir = run_dir(config.output_dir, "detectbbox")
     status = await message.reply_text(
-        "⏳ Ищу обрабатываемые GeoTIFF/COG сцены: "
+        "⏳ Ищу обрабатываемые GeoTIFF/COG сцены\n"
         f"sensor={sensor.value}, bbox={west},{south},{east},{north}, период={hours} ч"
     )
     try:
@@ -96,7 +157,7 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     first_scene = result.scenes[0]
     search_cache_status = "hit" if result.cache_hit else "refresh"
     await status.edit_text(
-        "Найдена сцена для детекции:\n"
+        "✅ Найдена сцена для детекции\n"
         f"token: {token}\n"
         f"provider: {result.provider}\n"
         f"sensor: {result.sensor.value}\n"
@@ -128,7 +189,7 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
     if not target:
         return
 
-    status = await target.reply_text(f"⏳ Запускаю детекцию по scene token: {token}")
+    status = await target.reply_text(f"⏳ Детекция по scene token: {token}")
     try:
         result = await asyncio.to_thread(
             run_detection_for_token,
@@ -145,16 +206,17 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
         )
     except MaterializationError as exc:
         await status.edit_text(
-            "Детекция не запущена: нет подходящего full-resolution GeoTIFF/COG asset.\n"
+            "Детекция не запущена: нет full-resolution GeoTIFF/COG asset.\n"
             f"Причина: {exc}\n\n"
-            "Это нормально для ASF ZIP/GRD и preview-only сцен. Для MVP-детекции нужен RTC/COG asset."
+            "Для ASF ZIP/GRD и preview-only сцен это ожидаемо. Используйте /detectbbox или кнопку 🔎 Найти суда.",
+            reply_markup=main_menu_markup(),
         )
         return
     except Exception as exc:
-        await status.edit_text(f"Ошибка детекции: {exc}")
+        await status.edit_text(f"Ошибка детекции: {exc}", reply_markup=main_menu_markup())
         return
 
-    await status.edit_text(summary_text(result))
+    await status.edit_text(summary_text(result), reply_markup=main_menu_markup())
     await send_detection_outputs(target, result)
 
 
@@ -164,20 +226,18 @@ def summary_text(result: DetectionRunResult) -> str:
     raster_cache_status = "hit" if result.materialized.cache_hit else "created"
     return (
         "✅ Детекция завершена\n"
-        f"token: {result.token}\n"
         f"sensor: {scene.sensor.value}\n"
         f"provider: {result.materialized.provider}\n"
         f"time: {scene.acquisition_time.isoformat()}\n"
-        f"product: {scene.product_id[:120]}\n"
         f"detections: {len(result.detections)}\n"
-        f"raster: {result.materialized.raster_key}\n"
         f"raster_cache: {raster_cache_status}\n"
-        f"aoi_crop: {crop_status}"
+        f"aoi_crop: {crop_status}\n"
+        f"token: {result.token}"
     )
 
 
 async def send_detection_outputs(target, result: DetectionRunResult) -> None:
-    await send_photo_or_document(target, result.overview_png, caption="Общий снимок с точками судов")
+    await send_photo_or_document(target, result.overview_png, caption="Обзор: найденные суда")
     for index, crop in enumerate(result.crop_pngs, start=1):
         await send_photo_or_document(target, crop, caption=f"Судно #{index}")
     for path in (result.geojson, result.csv, result.parquet, result.report_json):
