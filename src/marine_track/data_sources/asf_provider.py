@@ -8,6 +8,8 @@ from shapely.geometry import shape
 from marine_track.data_sources.base import SceneProvider, SearchRequest
 from marine_track.models import Scene, Sensor
 
+ASF_PREVIEW_KEYS = ("browse", "browseURL", "browseUrl", "thumbnail", "thumbnailUrl", "preview")
+
 
 class ASFProvider(SceneProvider):
     """NASA ASF provider for Sentinel-1 SAR scenes.
@@ -43,7 +45,7 @@ class ASFProvider(SceneProvider):
         for product in results:
             props = product.properties
             download_url = props.get("url")
-            assets = {"product": download_url} if download_url else {}
+            assets = _collect_asf_assets(props, download_url)
             scenes.append(
                 Scene(
                     provider=self.name,
@@ -59,6 +61,17 @@ class ASFProvider(SceneProvider):
                 )
             )
         return scenes
+
+
+def _collect_asf_assets(props: dict, download_url: object) -> dict[str, str]:
+    assets: dict[str, str] = {}
+    for key in ASF_PREVIEW_KEYS:
+        value = props.get(key)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            assets.setdefault(key, value)
+    if isinstance(download_url, str) and download_url:
+        assets.setdefault("product", download_url)
+    return assets
 
 
 def _parse_datetime(value: object) -> datetime:
