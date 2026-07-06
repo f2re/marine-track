@@ -8,7 +8,7 @@ from rich.table import Table
 
 from marine_track.config import load_config
 from marine_track.models import Sensor
-from marine_track.pipeline import parse_utc_datetime, search_scenes_with_fallback
+from marine_track.pipeline import parse_utc_datetime, run_search_stage, search_scenes_with_fallback
 
 app = typer.Typer(help="Marine Track MVP: vessel and ship-wake detection from satellite imagery")
 console = Console()
@@ -38,12 +38,14 @@ def search(
     table.add_column("product_id")
     table.add_column("beam")
     table.add_column("pol/cloud")
+    table.add_column("assets")
     for scene in scenes:
         table.add_row(
             scene.acquisition_time.isoformat(),
             scene.product_id,
             scene.beam_mode or "-",
-            scene.polarization or (str(scene.cloud_cover) if scene.cloud_cover is not None else "-"),
+            scene.polarization_label(),
+            str(len(scene.assets)),
         )
     console.print(table)
 
@@ -55,30 +57,26 @@ def run(
     end: str = typer.Option(..., "--to", help="UTC end time"),
     sensor: Sensor = typer.Option(Sensor.AUTO),
     output: Path = typer.Option(Path("runs/latest")),
+    max_results: int = typer.Option(50, min=1, max=500),
+    write_manifest: bool = typer.Option(True, help="Write asset manifest for the selected scenes"),
 ) -> None:
-    """Run the current MVP stage: scene search and provenance capture.
-
-    Full raster preprocessing/detection is intentionally separated into the next
-    implementation stage. This command already validates provider fallback and
-    creates a reproducible run directory.
-    """
-    output.mkdir(parents=True, exist_ok=True)
-    config = load_config()
-    provider, concrete_sensor, scenes = search_scenes_with_fallback(
-        config=config,
+    """Run the current MVP stage: scene search, provenance and asset manifest."""
+    result = run_search_stage(
         aoi=aoi,
         start=parse_utc_datetime(start),
         end=parse_utc_datetime(end),
         sensor=sensor,
-        max_results=50,
+        output=output,
+        max_results=max_results,
+        write_manifest=write_manifest,
     )
-    provenance = output / "scenes.json"
-    provenance.write_text(
-        "[\n" + ",\n".join(scene.model_dump_json(indent=2) for scene in scenes) + "\n]",
-        encoding="utf-8",
+    console.print(
+        f"[green]Found {result.scene_count} scenes via "
+        f"{result.provider}/{result.sensor.value}[/green]"
     )
-    console.print(f"[green]Found {len(scenes)} scenes via {provider}/{concrete_sensor.value}[/green]")
-    console.print(f"Saved provenance: {provenance}")
+    console.print(f"Saved provenance: {result.scenes_json}")
+    if result.asset_manifest:
+        console.print(f"Saved asset manifest: {result.asset_manifest}")
 
 
 if __name__ == "__main__":
