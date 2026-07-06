@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterator
+
+import numpy as np
+
+
+@dataclass(frozen=True)
+class Tile:
+    data: np.ndarray
+    row_start: int
+    col_start: int
+
+    @property
+    def row_stop(self) -> int:
+        return self.row_start + self.data.shape[0]
+
+    @property
+    def col_stop(self) -> int:
+        return self.col_start + self.data.shape[1]
+
+
+def read_raster_band(path: str | Path, band: int = 1) -> np.ndarray:
+    """Read one raster band as float32 and convert nodata to NaN."""
+    try:
+        import rasterio
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError("rasterio is required for raster reading") from exc
+
+    with rasterio.open(path) as dataset:
+        data = dataset.read(band).astype("float32")
+        nodata = dataset.nodata
+    if nodata is not None:
+        data[data == nodata] = np.nan
+    return data
+
+
+def percentile_normalize(
+    image: np.ndarray,
+    lower: float = 2.0,
+    upper: float = 98.0,
+) -> np.ndarray:
+    """Normalize image into 0..1 using finite-value percentiles."""
+    if image.ndim != 2:
+        raise ValueError("image must be 2D")
+    finite = np.isfinite(image)
+    out = np.full(image.shape, np.nan, dtype="float32")
+    if not finite.any():
+        return out
+
+    lo, hi = np.nanpercentile(image[finite], [lower, upper])
+    if hi <= lo:
+        out[finite] = 0.0
+        return out
+    out[finite] = np.clip((image[finite] - lo) / (hi - lo), 0.0, 1.0)
+    return out
+
+
+def iter_tiles(image: np.ndarray, tile_size: int, overlap: int = 0) -> Iterator[Tile]:
+    """Yield 2D tiles with optional overlap.
+
+    Edge tiles are clipped to the image bounds. `overlap` must be smaller than
+    `tile_size` so the iterator always advances.
+    """
+    if image.ndim != 2:
+        raise ValueError("image must be 2D")
+    if tile_size <= 0:
+        raise ValueError("tile_size must be positive")
+    if overlap < 0 or overlap >= tile_size:
+        raise ValueError("overlap must be in [0, tile_size)")
+
+    step = tile_size - overlap
+    rows, cols = image.shape
+    for row in range(0, rows, step):
+        for col in range(0, cols, step):
+            yield Tile(
+                data=image[row : min(row + tile_size, rows), col : min(col + tile_size, cols)],
+                row_start=row,
+                col_start=col,
+            )
+        if row + tile_size >= rows:
+            break
+
+
+def finite_fraction(image: np.ndarray) -> float:
+    if image.size == 0:
+        return 0.0
+    return float(np.isfinite(image).sum() / image.size)
