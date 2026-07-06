@@ -300,6 +300,25 @@ bash deploy_telegram_bot.sh --install-system-packages --yes --no-restart
 bash deploy_with_cache.sh --providers all
 ```
 
+## Восстановление прав `.env`
+
+Если при установке или деплое появились строки вида `grep: /opt/marine_track/.env: Permission denied`, обновите код и запустите repair helper:
+
+```bash
+cd /path/to/marine-track
+git pull
+bash repair_env_permissions.sh
+bash deploy_with_cache.sh --providers all --yes
+```
+
+Ожидаемые права:
+
+```text
+/opt/marine_track/.env  root:marinetrack 0640
+```
+
+Базовые install/deploy scripts читают защищенный `.env` через `sudo`, поэтому обычный пользователь больше не должен получать `grep Permission denied`.
+
 ## Выходные файлы детекции
 
 ```text
