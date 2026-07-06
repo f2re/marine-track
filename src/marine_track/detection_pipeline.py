@@ -34,6 +34,8 @@ def run_detection_for_token(
     max_area_px: int = 5000,
     local_window_px: int = 31,
     guard_window_px: int = 5,
+    land_mask_geojson: str | Path | None = None,
+    shoreline_buffer_m: float = 0.0,
 ) -> DetectionRunResult:
     run_dir = output_dir / "detections" / token
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -49,6 +51,8 @@ def run_detection_for_token(
         max_area_px=max_area_px,
         local_window_px=local_window_px,
         guard_window_px=guard_window_px,
+        land_mask_geojson=land_mask_geojson,
+        shoreline_buffer_m=shoreline_buffer_m,
     )
 
     geojson = write_geojson(detections, run_dir / "detections.geojson")
@@ -72,6 +76,8 @@ def run_detection_for_token(
         max_area_px=max_area_px,
         local_window_px=local_window_px,
         guard_window_px=guard_window_px,
+        land_mask_geojson=land_mask_geojson,
+        shoreline_buffer_m=shoreline_buffer_m,
     )
     return DetectionRunResult(
         token=token,
@@ -112,6 +118,8 @@ def write_report_json(
     max_area_px: int,
     local_window_px: int,
     guard_window_px: int,
+    land_mask_geojson: str | Path | None,
+    shoreline_buffer_m: float,
 ) -> Path:
     payload = {
         "token": token,
@@ -129,6 +137,8 @@ def write_report_json(
             "max_area_px": max_area_px,
             "local_window_px": local_window_px,
             "guard_window_px": guard_window_px,
+            "land_mask_geojson": str(land_mask_geojson) if land_mask_geojson else None,
+            "shoreline_buffer_m": shoreline_buffer_m,
         },
         "detections_count": len(detections),
         "crop_count": len(crop_pngs),
