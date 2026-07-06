@@ -6,8 +6,9 @@ import sys
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
+ENV_FILE = PROJECT_DIR / ".env"
 
-REQUIRED_MODULES = (
+CORE_MODULES = (
     "numpy",
     "pandas",
     "pydantic",
@@ -23,11 +24,6 @@ REQUIRED_MODULES = (
     "scipy",
     "skimage",
     "cv2",
-    "pystac_client",
-    "asf_search",
-    "planetary_computer",
-    "sentinelhub",
-    "copernicusmarine",
     "marine_track.cli",
     "marine_track.pipeline",
     "marine_track.telegram_bot",
@@ -37,11 +33,52 @@ REQUIRED_MODULES = (
     "marine_track.scene_materializer",
     "marine_track.land_mask",
     "marine_track.provider_auth",
-    "marine_track.data_sources.sentinelhub_provider",
-    "marine_track.copernicus_marine_provider",
     "marine_track.ais_sources",
     "marine_track.noaa_ais_source",
 )
+
+SCENE_PROVIDER_MODULES = (
+    "pystac_client",
+    "asf_search",
+    "planetary_computer",
+    "sentinelhub",
+    "marine_track.data_sources.sentinelhub_provider",
+)
+
+AUX_PROVIDER_MODULES = (
+    "copernicusmarine",
+    "marine_track.copernicus_marine_provider",
+)
+
+
+def load_dotenv(path: Path = ENV_FILE) -> None:
+    if not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def provider_profile() -> str:
+    value = os.getenv("MARINE_TRACK_PROVIDER_PROFILE", "all").strip().lower()
+    if value == "none":
+        return "core"
+    if value not in {"all", "scene", "aux", "core"}:
+        return "all"
+    return value
+
+
+def required_modules() -> tuple[str, ...]:
+    profile = provider_profile()
+    modules = list(CORE_MODULES)
+    if profile in {"all", "scene"}:
+        modules.extend(SCENE_PROVIDER_MODULES)
+    if profile in {"all", "aux"}:
+        modules.extend(AUX_PROVIDER_MODULES)
+    return tuple(modules)
 
 
 def project_path(raw: str) -> Path:
@@ -51,7 +88,7 @@ def project_path(raw: str) -> Path:
 
 def check_imports() -> list[str]:
     errors: list[str] = []
-    for module_name in REQUIRED_MODULES:
+    for module_name in required_modules():
         try:
             importlib.import_module(module_name)
         except Exception as exc:
@@ -101,13 +138,14 @@ def check_numeric_env() -> list[str]:
 
 
 def main() -> int:
+    load_dotenv()
     errors = check_imports() + check_paths() + check_numeric_env()
     if errors:
-        print("Runtime check failed:", file=sys.stderr)
+        print(f"Runtime check failed (provider_profile={provider_profile()}):", file=sys.stderr)
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
-    print("Runtime check OK")
+    print(f"Runtime check OK (provider_profile={provider_profile()})")
     return 0
 
 
