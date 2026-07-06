@@ -15,6 +15,11 @@ from marine_track.models import Scene, Sensor
 from marine_track.pipeline import run_search_stage
 from marine_track.telegram_commands import BOT_COMMAND_LINES
 from marine_track.telegram_config import TelegramBotConfig, load_telegram_config
+from marine_track.telegram_detection import (
+    DETECT_CALLBACK_PREFIX,
+    detect_callback as scene_detect_callback,
+    detect_command as scene_detect_command,
+)
 from marine_track.telegram_scene_browser import (
     CALLBACK_PREFIX,
     bbox_dates_command as scene_bbox_dates_command,
@@ -45,6 +50,7 @@ HELP_TEXT = """<b>Marine Track Bot</b>
 Сроки снимков по прямоугольнику. Пример: <code>/bboxdates sentinel1 36.5 43.8 38.5 45.0 12</code>
 
 <code>/image token</code> — отправить preview/quicklook для ранее найденного срока.
+<code>/detect token</code> — обработать full-resolution GeoTIFF/COG asset и отправить точки судов.
 <code>/status</code> — конфигурация и ограничения.
 <code>/whoami</code> — ваш Telegram user id для TELEGRAM_ADMIN_IDS.
 """
@@ -174,7 +180,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await message.reply_text(
         "🚢 Marine Track\n\n"
         "MVP для поиска Sentinel-1/Sentinel-2 сцен под задачу обнаружения судов и кильватерных следов.\n\n"
-        "Сроки снимков: /dates или /bboxdates. Справка: /help"
+        "Сроки снимков: /dates или /bboxdates. Детекция: /detect <token>. Справка: /help"
     )
 
 
@@ -340,10 +346,24 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await scene_image_command(update, context, get_config())
 
 
+async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_authorized(update):
+        return
+    async with get_semaphore():
+        await scene_detect_command(update, context, get_config())
+
+
 async def scene_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_authorized(update):
         return
     await scene_image_callback(update, context, get_config())
+
+
+async def detect_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_authorized(update):
+        return
+    async with get_semaphore():
+        await scene_detect_callback(update, context, get_config())
 
 
 def build_application() -> Application:
@@ -358,7 +378,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("dates", dates_command))
     application.add_handler(CommandHandler("bboxdates", bboxdates_command))
     application.add_handler(CommandHandler("image", image_command))
+    application.add_handler(CommandHandler("detect", detect_command))
     application.add_handler(CallbackQueryHandler(scene_callback, pattern=f"^{CALLBACK_PREFIX}:"))
+    application.add_handler(CallbackQueryHandler(detect_callback, pattern=f"^{DETECT_CALLBACK_PREFIX}:"))
     return application
 
 
