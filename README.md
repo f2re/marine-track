@@ -22,7 +22,9 @@ bash deploy_telegram_bot.sh --providers all
 ## Что уже реализовано
 
 - Telegram bot `marine-track-bot`.
-- Slash-команды `/dates`, `/bboxdates`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
+- Главное inline-меню: `Найти суда`, `Сроки снимков`, `Статус`, `Помощь`, `Мой ID`.
+- Быстрый сценарий без ручного token: default AOI → свежая detection-capable сцена → детекция → файлы.
+- Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
 - Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
 - Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
@@ -197,9 +199,28 @@ marine-track update-land-mask \
 
 ## Telegram bot
 
+Основной пользовательский сценарий:
+
+```text
+/start → 🔎 Найти суда → обзор/crops/files
+```
+
+Кнопки меню:
+
+```text
+🔎 Найти суда       свежая detection-capable сцена по default AOI и детекция
+🕒 Сроки снимков    список сцен; дальше 📷 preview или 🔎 детекция
+⚙️ Статус           AOI, sensor, lookback, land mask, output dir
+❓ Помощь            краткая инструкция и примеры
+🆔 Мой ID            Telegram id для TELEGRAM_ADMIN_IDS
+```
+
 Команды:
 
 ```text
+/start
+/menu
+/help
 /dates [auto|sentinel1|sentinel2] [hours]
 /bboxdates [auto|sentinel1|sentinel2] west south east north [hours]
 /image token
@@ -224,6 +245,6 @@ MARINE_TRACK_OUTPUT_DIR/detections/<token>/report.json
 
 ## Текущий план реализации
 
-См. `docs/IMPLEMENTATION_PLAN.md`.
+См. `docs/IMPLEMENTATION_PLAN.md` и `docs/UX_REVIEW.md`.
 
-Ближайший следующий этап: AIS track rendering и wake association.
+Ближайший следующий этап: AIS track rendering и сохраненные пользовательские AOI/bbox.
