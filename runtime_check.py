@@ -5,6 +5,8 @@ import os
 import sys
 from pathlib import Path
 
+PROJECT_DIR = Path(__file__).resolve().parent
+
 REQUIRED_MODULES = (
     "numpy",
     "pandas",
@@ -23,10 +25,20 @@ REQUIRED_MODULES = (
     "cv2",
     "pystac_client",
     "asf_search",
+    "planetary_computer",
     "marine_track.cli",
     "marine_track.pipeline",
     "marine_track.telegram_bot",
+    "marine_track.telegram_detection",
+    "marine_track.detection_pipeline",
+    "marine_track.detection_scene_search",
+    "marine_track.scene_materializer",
 )
+
+
+def project_path(raw: str) -> Path:
+    path = Path(raw)
+    return path if path.is_absolute() else PROJECT_DIR / path
 
 
 def check_imports() -> list[str]:
@@ -41,10 +53,10 @@ def check_imports() -> list[str]:
 
 def check_paths() -> list[str]:
     errors: list[str] = []
-    aoi = Path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson"))
+    aoi = project_path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson"))
     if not aoi.is_file():
         errors.append(f"default AOI not found: {aoi}")
-    out_dir = Path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram"))
+    out_dir = project_path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram"))
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         probe = out_dir / ".runtime_write_test"
@@ -79,7 +91,7 @@ def main() -> int:
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
-    print("Runtime check OK: imports, bot modules, default AOI and output directory")
+    print("Runtime check OK")
     return 0
 
 
