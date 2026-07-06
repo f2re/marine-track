@@ -72,7 +72,7 @@ def test_run_detection_for_token_outputs_files(tmp_path):
     raster = write_test_raster(tmp_path / "scene.tif")
     scene = make_scene(raster)
     token = register_test_scene(tmp_path, scene)
-    result = run_detection_for_token(token, tmp_path, threshold_sigma=2.0)
+    result = run_detection_for_token(token, tmp_path, threshold_sigma=1.0, local_window_px=0)
     assert result.overview_png.is_file()
     assert result.geojson.is_file()
     assert result.csv.is_file()
