@@ -21,6 +21,7 @@ from marine_track.telegram_config import TelegramBotConfig
 
 DEFAULT_HOURS = 12
 CALLBACK_PREFIX = "mtimg"
+DETECT_CALLBACK_PREFIX = "mtdetect"
 REGISTRY_FILE = "scene_registry.json"
 PREVIEW_KEYS = (
     "thumbnail",
@@ -187,8 +188,15 @@ def scene_keyboard(tokens: list[str], scenes: list[Scene], max_buttons: int = 12
     for token, scene in list(zip(tokens, scenes, strict=True))[:max_buttons]:
         time_label = scene.acquisition_time.strftime("%m-%d %H:%MZ")
         sensor_label = scene.sensor.value.replace("sentinel", "S")
-        text = f"📷 {time_label} {sensor_label}"
-        rows.append([InlineKeyboardButton(text, callback_data=f"{CALLBACK_PREFIX}:{token}")])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"📷 {time_label} {sensor_label}",
+                    callback_data=f"{CALLBACK_PREFIX}:{token}",
+                ),
+                InlineKeyboardButton("🔎 Детекция", callback_data=f"{DETECT_CALLBACK_PREFIX}:{token}"),
+            ]
+        )
     return InlineKeyboardMarkup(rows)
 
 
@@ -209,7 +217,7 @@ def format_scenes_message(provider: str, sensor: Sensor, scenes: list[Scene], ho
     if len(scenes) > 12:
         lines.append(f"... ещё {len(scenes) - 12}")
     lines.append("")
-    lines.append("Нажмите кнопку со сроком, чтобы отправить preview/quicklook.")
+    lines.append("Нажмите 📷 для preview или 🔎 для запуска детекции по сроку.")
     return "\n".join(lines)
 
 
