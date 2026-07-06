@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import html
 
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
-from marine_track.telegram_commands import BOT_COMMAND_LINES
 from marine_track.telegram_config import TelegramBotConfig, load_telegram_config
 from marine_track.telegram_detection import (
     DETECT_CALLBACK_PREFIX,
     detect_bbox_command as scene_detect_bbox_command,
     detect_callback as scene_detect_callback,
     detect_command as scene_detect_command,
+    detect_default_aoi as scene_detect_default_aoi,
 )
 from marine_track.telegram_scene_browser import (
     CALLBACK_PREFIX,
@@ -22,21 +21,21 @@ from marine_track.telegram_scene_browser import (
     image_command as scene_image_command,
     list_dates_command as scene_dates_command,
 )
+from marine_track.telegram_ui import (
+    ACTION_DATES_DEFAULT,
+    ACTION_DETECT_DEFAULT,
+    ACTION_HELP,
+    ACTION_STATUS,
+    ACTION_WHOAMI,
+    MENU_CALLBACK_PREFIX,
+    help_text,
+    main_menu_markup,
+    start_text,
+    status_text,
+)
 
 CONFIG: TelegramBotConfig | None = None
 JOB_SEMAPHORE: asyncio.Semaphore | None = None
-
-HELP_TEXT = """<b>Marine Track Bot</b>
-
-Команды:
-<code>/dates [auto|sentinel1|sentinel2] [hours]</code> — доступные сроки по AOI.
-<code>/bboxdates [auto|sentinel1|sentinel2] west south east north [hours]</code> — сроки по bbox.
-<code>/image token</code> — preview/quicklook выбранной сцены.
-<code>/detect token</code> — детекция по сохраненному scene token.
-<code>/detectbbox [auto|sentinel1|sentinel2] west south east north [hours]</code> — найти GeoTIFF/COG сцену и запустить детекцию.
-<code>/status</code> — конфигурация.
-<code>/whoami</code> — Telegram user id.
-"""
 
 
 def get_config() -> TelegramBotConfig:
@@ -65,51 +64,85 @@ def is_authorized(update: Update) -> bool:
 async def require_authorized(update: Update) -> bool:
     if is_authorized(update):
         return True
-    if update.effective_message:
-        await update.effective_message.reply_text(
-            f"Доступ закрыт. Ваш Telegram user id: {effective_user_id(update)}."
-        )
+    target = update.effective_message or (update.callback_query.message if update.callback_query else None)
+    if target:
+        await target.reply_text(f"Доступ закрыт. Ваш Telegram user id: {effective_user_id(update)}.")
     return False
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message:
         await update.effective_message.reply_text(
-            "🚢 Marine Track\n\n"
-            "Сроки снимков: /dates или /bboxdates. Детекция: /detect или /detectbbox."
+            start_text(get_config()),
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_menu_markup(),
         )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message:
-        await update.effective_message.reply_text(HELP_TEXT, parse_mode=ParseMode.HTML)
+        await update.effective_message.reply_text(
+            help_text(),
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_menu_markup(),
+        )
+
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await start_command(update, context)
 
 
 async def whoami_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message:
-        await update.effective_message.reply_text(f"Ваш Telegram user id: {effective_user_id(update)}")
+        await update.effective_message.reply_text(
+            f"Ваш Telegram user id: <code>{effective_user_id(update)}</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_menu_markup(),
+        )
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.effective_message:
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            status_text(get_config(), is_authorized(update), effective_user_id(update)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_menu_markup(),
+        )
+
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not query.data:
         return
-    config = get_config()
-    lines = [
-        "Marine Track Bot",
-        f"default_aoi: {config.default_aoi}",
-        f"output_dir: {config.output_dir}",
-        f"default_sensor: {config.default_sensor.value}",
-        f"default_lookback_hours: {config.default_lookback_hours}",
-        f"max_results: {config.max_results}",
-        f"max_concurrent_jobs: {config.max_concurrent_jobs}",
-        f"admin_restricted: {'yes' if config.admin_ids else 'no'}",
-        "",
-        *BOT_COMMAND_LINES,
-    ]
-    await update.effective_message.reply_text(
-        "<pre>" + html.escape("\n".join(lines)) + "</pre>",
-        parse_mode=ParseMode.HTML,
-    )
+    await query.answer()
+    _, _, action = query.data.partition(":")
+    if action == ACTION_HELP:
+        await query.message.reply_text(help_text(), parse_mode=ParseMode.HTML, reply_markup=main_menu_markup())
+        return
+    if action == ACTION_STATUS:
+        await query.message.reply_text(
+            status_text(get_config(), is_authorized(update), effective_user_id(update)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_menu_markup(),
+        )
+        return
+    if action == ACTION_WHOAMI:
+        await query.message.reply_text(
+            f"Ваш Telegram user id: <code>{effective_user_id(update)}</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_menu_markup(),
+        )
+        return
+    if not await require_authorized(update):
+        return
+    if action == ACTION_DATES_DEFAULT:
+        async with get_semaphore():
+            await scene_dates_command(update, context, get_config())
+        return
+    if action == ACTION_DETECT_DEFAULT:
+        async with get_semaphore():
+            await scene_detect_default_aoi(update, context, get_config())
+        return
 
 
 async def dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -156,6 +189,7 @@ def build_application() -> Application:
     app = Application.builder().token(get_config().token).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("whoami", whoami_command))
     app.add_handler(CommandHandler("dates", dates_command))
@@ -163,6 +197,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("image", image_command))
     app.add_handler(CommandHandler("detect", detect_command))
     app.add_handler(CommandHandler("detectbbox", detectbbox_command))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=f"^{MENU_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(image_callback, pattern=f"^{CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(detect_callback, pattern=f"^{DETECT_CALLBACK_PREFIX}:"))
     return app
