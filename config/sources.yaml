@@ -4,10 +4,10 @@ sensors:
       - asf
       - copernicus_cdse
       - planetary_computer
-      - earthsearch
+      - sentinelhub
     filters:
       platform: SENTINEL1
-      product_type: GRD
+      product_type: GRD_OR_RTC
       beam_modes: [IW, EW, SM]
       polarizations: [VV, VH, HH, HV]
       min_confidence: 0.5
@@ -37,7 +37,16 @@ auxiliary:
     priority:
       - local_ais
       - noaa_marinecadastre
-      - global_fishing_watch
     validation:
       time_window_minutes: 30
       max_match_distance_m: 3000
+
+provider_notes:
+  asf: implemented via asf_search; search is active, authenticated download uses Earthdata credentials/token.
+  copernicus_cdse: implemented via STAC with optional CDSE OAuth bearer token.
+  planetary_computer: implemented via STAC; asset signing is handled during materialization.
+  sentinelhub: implemented via Sentinel Hub Catalog OAuth provider.
+  earthsearch: implemented via public Element84 EarthSearch STAC for Sentinel-2 L2A.
+  copernicus_marine: implemented via official copernicusmarine toolbox wrapper.
+  local_ais: implemented via normalized local CSV.
+  noaa_marinecadastre: implemented via configured public daily ZIP archive base URL.
