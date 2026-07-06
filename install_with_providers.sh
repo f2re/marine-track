@@ -10,6 +10,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 PROVIDER_PROFILE="${MARINE_TRACK_PROVIDER_PROFILE:-all}"
 ASSUME_YES=0
 NO_START=0
+EXTRA_ARGS=()
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$INSTALL_DIR/.env"
@@ -64,19 +65,13 @@ pip_target() {
 
 if [[ "$ASSUME_YES" -eq 1 ]]; then
   BASE_YES=(--yes)
-  CONFIG_YES=(--yes)
 else
   BASE_YES=()
-  CONFIG_YES=()
 fi
-if [[ "$NO_START" -eq 1 ]]; then
-  BASE_NO_START=(--no-start)
-else
-  BASE_NO_START=(--no-start)
-fi
+BASE_NO_START=(--no-start)
 
 MARINE_TRACK_PROVIDER_PROFILE="$PROVIDER_PROFILE" "$SCRIPT_DIR/install_telegram_bot.sh" \
-  --providers "$PROVIDER_PROFILE" "${BASE_YES[@]}" "${BASE_NO_START[@]}" "${EXTRA_ARGS[@]:-}"
+  --providers "$PROVIDER_PROFILE" "${BASE_YES[@]}" "${BASE_NO_START[@]}" "${EXTRA_ARGS[@]}"
 
 python_args=("$INSTALL_DIR/provider_configure.py" --env-file "$ENV_FILE" --profile "$PROVIDER_PROFILE")
 [[ "$ASSUME_YES" -eq 1 ]] && python_args+=(--yes)
