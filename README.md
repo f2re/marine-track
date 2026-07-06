@@ -16,6 +16,7 @@ AOI или bbox → поиск Sentinel-сцен → выбор срока → G
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
 - Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
 - Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
+- Provider-aware install/deploy wrappers: установка provider extras, интерактивный запрос ключей, preflight-проверка.
 - Detection-aware поиск сцен: STAC-провайдеры фильтруются по наличию GeoTIFF/COG assets.
 - Для Sentinel-1 `/detectbbox` предпочитает Planetary Computer `sentinel-1-rtc`.
 - Materializer выбирает full-resolution GeoTIFF/COG asset, подписывает Planetary Computer URL при возможности и вырезает AOI.
@@ -24,7 +25,7 @@ AOI или bbox → поиск Sentinel-сцен → выбор срока → G
 - Overview PNG с точками/номерами судов.
 - Crop PNG по каждому найденному судну.
 - Вывод GeoJSON, CSV, Parquet и `report.json`.
-- Install/deploy scripts для systemd-сервиса с профилями provider-зависимостей.
+- Install/deploy scripts для systemd-сервиса.
 
 ## Что пока не реализовано
 
@@ -37,8 +38,6 @@ AOI или bbox → поиск Sentinel-сцен → выбор срока → G
 
 ## Быстрый старт для разработки
 
-Core-only:
-
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -47,10 +46,12 @@ python -m pytest -q
 ruff check src tests
 ```
 
-Со всеми provider-пакетами:
+С provider-пакетами для разработки:
 
 ```bash
 pip install -e .[providers,dev]
+python runtime_check.py
+python provider_preflight.py
 ```
 
 CLI:
@@ -101,12 +102,16 @@ cd marine-track
 
 2. Создать бота через BotFather и получить Telegram token.
 
-3. Узнать свой Telegram user id. Можно запустить бота без `TELEGRAM_ADMIN_IDS`, выполнить `/whoami`, затем добавить id в `.env`.
-
-4. Установить сервис. По умолчанию ставятся все provider-пакеты:
+3. Установить сервис через provider-aware wrapper. Без `--yes` скрипт интерактивно запросит ключи активных провайдеров и покажет краткие инструкции, где их получить:
 
 ```bash
-TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_telegram_bot.sh --providers all --yes
+TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_with_providers.sh --providers all
+```
+
+Для полностью неинтерактивной установки ключи надо заранее передать через окружение или потом заполнить `/opt/marine_track/.env`; в этом режиме preflight покажет недостающие доступы:
+
+```bash
+TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_with_providers.sh --providers all --yes
 ```
 
 Профили provider-зависимостей:
@@ -122,8 +127,8 @@ none   = alias для core
 Примеры:
 
 ```bash
-bash install_telegram_bot.sh --providers scene --yes
-bash install_telegram_bot.sh --providers core --yes
+bash install_with_providers.sh --providers scene
+bash install_with_providers.sh --providers core --yes
 ```
 
 По умолчанию используется:
@@ -133,7 +138,7 @@ bash install_telegram_bot.sh --providers core --yes
 /etc/systemd/system/marine-track-bot.service
 ```
 
-5. Проверить статус:
+4. Проверить статус:
 
 ```bash
 bash install_telegram_bot.sh --status
@@ -175,6 +180,13 @@ MARINE_TRACK_SHORELINE_BUFFER_M=500
 
 Полный аудит провайдеров и инструкция по получению/настройке доступов: `docs/PROVIDERS.md`.
 
+Ключи активных провайдеров можно запросить отдельно:
+
+```bash
+sudo python3 /opt/marine_track/provider_configure.py --env-file /opt/marine_track/.env --profile all
+sudo -u marinetrack /opt/marine_track/.venv/bin/python /opt/marine_track/provider_preflight.py
+```
+
 Кратко:
 
 ```text
@@ -211,24 +223,31 @@ NOAA_MARINECADASTRE_CACHE_DIR=runs/noaa_ais
 
 ## Обновление после `git pull`
 
+Интерактивный деплой с запросом новых/пустых provider-доступов:
+
 ```bash
 git pull
-bash deploy_telegram_bot.sh --providers all --yes
-cd /opt/marine_track
-source .venv/bin/activate
-python register_telegram_commands.py
+bash deploy_with_providers.sh --providers all
+```
+
+Неинтерактивный деплой:
+
+```bash
+git pull
+bash deploy_with_providers.sh --providers all --yes
 ```
 
 Чтобы пропустить provider-пакеты при деплое:
 
 ```bash
-bash deploy_telegram_bot.sh --providers core --yes
+bash deploy_with_providers.sh --providers core --yes
 ```
 
-При изменении системных geospatial-зависимостей:
+При изменении системных geospatial-зависимостей сначала обновите системные пакеты базовым deploy:
 
 ```bash
-bash deploy_telegram_bot.sh --install-system-packages --yes
+bash deploy_telegram_bot.sh --install-system-packages --yes --no-restart
+bash deploy_with_providers.sh --providers all
 ```
 
 ## Выходные файлы детекции
