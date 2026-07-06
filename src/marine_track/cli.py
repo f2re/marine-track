@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 
 from marine_track.config import load_config
+from marine_track.land_mask_update import DEFAULT_LAND_MASK_SOURCE_URL, update_land_mask as build_land_mask
 from marine_track.models import Sensor
 from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.pipeline import parse_utc_datetime, run_search_stage, search_scenes_with_fallback
@@ -108,6 +109,28 @@ def detect_raster(
     write_csv(detections, output.with_suffix(".csv"))
     write_parquet(detections, output.with_suffix(".parquet"))
     console.print(f"[green]Saved {len(detections)} detections to {output}[/green]")
+
+
+@app.command("update-land-mask")
+def update_land_mask_command(
+    output: Path = typer.Option(Path("data/masks/land.geojson"), help="Output GeoJSON mask path"),
+    source: str = typer.Option(DEFAULT_LAND_MASK_SOURCE_URL, help="Source URL or local ZIP/SHP/GeoJSON path"),
+    cache_dir: Path = typer.Option(Path("data/masks/cache"), help="Download/cache directory"),
+    aoi: Path | None = typer.Option(None, exists=True, readable=True, help="Optional AOI GeoJSON to clip mask"),
+    force: bool = typer.Option(False, help="Rebuild even if output already exists"),
+) -> None:
+    """Download/read land polygons and build MARINE_TRACK_LAND_MASK_GEOJSON."""
+    result = build_land_mask(
+        output_path=output,
+        source=source,
+        cache_dir=cache_dir,
+        aoi_geojson=aoi,
+        force=force,
+    )
+    console.print(
+        "[green]Land mask ready[/green]: "
+        f"{result.output_path} features={result.feature_count} clipped={result.clipped}"
+    )
 
 
 if __name__ == "__main__":
