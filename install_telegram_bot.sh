@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Marine Track Telegram bot into /opt and run it as a systemd service.
+# Install Marine Track Telegram bot. This is the only supported install script.
 
 set -Eeuo pipefail
 
@@ -37,19 +37,12 @@ Options:
   --service-name NAME
   --service-user USER
   --python PATH
-  --providers PROFILE      Provider dependencies: all, scene, aux, core, none. Default: all
-  --yes
+  --providers PROFILE      all, scene, aux, core, none. Default: all
+  --yes                    Non-interactive; deploy will fail if required values are absent
   --skip-apt
   --no-start
   --status
   -h, --help
-
-Provider profiles:
-  all    install core package plus scene and auxiliary provider packages
-  scene  install core package plus scene provider packages only
-  aux    install core package plus auxiliary provider packages only
-  core   install only core package; provider imports are skipped by runtime check
-  none   alias for core
 EOF
 }
 
@@ -75,9 +68,6 @@ UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 STATE_FILE="$INSTALL_DIR/.install-state"
 if [[ "$(id -u)" -eq 0 ]]; then SUDO=""; else SUDO="sudo"; fi
 run_root() { if [[ -n "$SUDO" ]]; then sudo "$@"; else "$@"; fi; }
-run_user() { local user="$1"; shift; if [[ -n "$SUDO" ]]; then sudo -u "$user" "$@"; else runuser -u "$user" -- "$@"; fi; }
-root_grep_q() { local pattern="$1"; local file="$2"; if [[ -n "$SUDO" ]]; then sudo grep -q "$pattern" "$file"; else grep -q "$pattern" "$file"; fi; }
-root_sed_print() { if [[ -n "$SUDO" ]]; then sudo sed "$@"; else sed "$@"; fi; }
 
 confirm() {
   [[ "$ASSUME_YES" -eq 1 ]] && return 0
@@ -90,16 +80,7 @@ normalize_provider_profile() {
   case "$PROVIDER_PROFILE" in
     all|scene|aux|core) ;;
     none) PROVIDER_PROFILE="core" ;;
-    *) fail "invalid provider profile: $PROVIDER_PROFILE. Use all, scene, aux, core, none" ;;
-  esac
-}
-
-pip_install_target() {
-  case "$PROVIDER_PROFILE" in
-    all) printf '%s[providers]' "$INSTALL_DIR" ;;
-    scene) printf '%s[scene-providers]' "$INSTALL_DIR" ;;
-    aux) printf '%s[aux-providers]' "$INSTALL_DIR" ;;
-    core) printf '%s' "$INSTALL_DIR" ;;
+    *) fail "invalid provider profile: $PROVIDER_PROFILE" ;;
   esac
 }
 
@@ -112,7 +93,7 @@ print_status() {
     printf 'active: ' >&2; systemctl is-active "${SERVICE_NAME}.service" >&2 || true
     printf 'enabled: ' >&2; systemctl is-enabled "${SERVICE_NAME}.service" >&2 || true
   fi
-  [[ -f "$STATE_FILE" ]] && root_sed_print 's/^/state: /' "$STATE_FILE" >&2 || true
+  [[ -f "$STATE_FILE" ]] && run_root sed 's/^/state: /' "$STATE_FILE" >&2 || true
 }
 
 install_system_packages() {
@@ -125,7 +106,7 @@ install_system_packages() {
 require_repo_files() {
   [[ -f "$REPO_ROOT/pyproject.toml" ]] || fail "pyproject.toml not found"
   [[ -f "$REPO_ROOT/runtime_check.py" ]] || fail "runtime_check.py not found"
-  [[ -f "$REPO_ROOT/register_telegram_commands.py" ]] || fail "register_telegram_commands.py not found"
+  [[ -f "$REPO_ROOT/deploy_telegram_bot.sh" ]] || fail "deploy_telegram_bot.sh not found"
   [[ -f "$REPO_ROOT/src/marine_track/telegram_bot.py" ]] || fail "telegram bot module not found"
 }
 
@@ -133,62 +114,15 @@ ensure_user() {
   id "$SERVICE_USER" >/dev/null 2>&1 || run_root useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
 }
 
-copy_project() {
+bootstrap_install_dir() {
   run_root mkdir -p "$INSTALL_DIR"
-  run_root rsync -a --delete --exclude '.git/' --exclude '.venv/' --exclude '.env' --exclude 'runs/' --exclude '__pycache__/' --exclude '*.pyc' "$REPO_ROOT/" "$INSTALL_DIR/"
-  run_root chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
-}
-
-write_env_if_missing() {
+  run_root chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
   if [[ ! -f "$ENV_FILE" ]]; then
-    run_root install -m 0640 -o root -g "$SERVICE_USER" "$INSTALL_DIR/.env.example" "$ENV_FILE"
-    if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
-      run_root sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}|" "$ENV_FILE"
-    fi
-    if [[ -n "${TELEGRAM_ADMIN_IDS:-}" ]]; then
-      run_root sed -i "s|^TELEGRAM_ADMIN_IDS=.*|TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS}|" "$ENV_FILE"
-    fi
-    warn "created $ENV_FILE; edit it before starting if credentials are empty"
+    run_root install -m 0640 -o root -g "$SERVICE_USER" "$REPO_ROOT/.env.example" "$ENV_FILE"
+    warn "created $ENV_FILE"
   fi
-  sync_env_defaults
-  set_env_key "MARINE_TRACK_PROVIDER_PROFILE" "$PROVIDER_PROFILE"
-}
-
-sync_env_defaults() {
-  local template="$INSTALL_DIR/.env.example"
-  [[ -f "$template" && -f "$ENV_FILE" ]] || return 0
-  local added=0
-  while IFS= read -r line; do
-    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
-    local key="${line%%=*}"
-    if ! root_grep_q "^${key}=" "$ENV_FILE"; then
-      printf '\n%s\n' "$line" | run_root tee -a "$ENV_FILE" >/dev/null
-      added=$((added + 1))
-    fi
-  done < "$template"
-  [[ "$added" -gt 0 ]] && warn "added $added missing env keys to $ENV_FILE"
   run_root chown root:"$SERVICE_USER" "$ENV_FILE"
   run_root chmod 0640 "$ENV_FILE"
-}
-
-set_env_key() {
-  local key="$1"
-  local value="$2"
-  if root_grep_q "^${key}=" "$ENV_FILE"; then
-    run_root sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
-  else
-    printf '\n%s=%s\n' "$key" "$value" | run_root tee -a "$ENV_FILE" >/dev/null
-  fi
-}
-
-create_venv() {
-  local target
-  target="$(pip_install_target)"
-  run_user "$SERVICE_USER" "$PYTHON_BIN" -m venv "$VENV_DIR"
-  run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
-  log "installing python package with provider profile: $PROVIDER_PROFILE ($target)"
-  run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" -m pip install --prefer-binary -e "$target"
-  run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" -m pip check
 }
 
 write_service() {
@@ -220,18 +154,7 @@ EOF
   run_root systemctl daemon-reload
 }
 
-start_service() {
-  [[ "$NO_START" -eq 1 ]] && { warn "service not started"; return 0; }
-  if ! root_grep_q '^TELEGRAM_BOT_TOKEN=.' "$ENV_FILE"; then
-    warn "bot token is empty in $ENV_FILE; service start skipped"
-    return 0
-  fi
-  run_root systemctl enable --now "${SERVICE_NAME}.service"
-  sleep 2
-  systemctl is-active --quiet "${SERVICE_NAME}.service" || { run_root journalctl -u "${SERVICE_NAME}.service" -n 60 --no-pager || true; fail "service did not start"; }
-}
-
-write_state() {
+write_initial_state() {
   cat <<EOF | run_root tee "$STATE_FILE" >/dev/null
 installed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 install_dir=$INSTALL_DIR
@@ -244,6 +167,13 @@ EOF
   run_root chown "$SERVICE_USER:$SERVICE_USER" "$STATE_FILE"
 }
 
+run_integrated_deploy() {
+  local args=(--install-dir "$INSTALL_DIR" --service-name "$SERVICE_NAME" --service-user "$SERVICE_USER" --python "$PYTHON_BIN" --providers "$PROVIDER_PROFILE")
+  [[ "$ASSUME_YES" -eq 1 ]] && args+=(--yes)
+  [[ "$NO_START" -eq 1 ]] && args+=(--no-restart)
+  "$REPO_ROOT/deploy_telegram_bot.sh" "${args[@]}"
+}
+
 main() {
   normalize_provider_profile
   print_status
@@ -252,13 +182,10 @@ main() {
   confirm "Install Marine Track Telegram bot to $INSTALL_DIR with provider profile '$PROVIDER_PROFILE'?" || fail "cancelled"
   install_system_packages
   ensure_user
-  copy_project
-  write_env_if_missing
-  create_venv
-  run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" MARINE_TRACK_PROVIDER_PROFILE="$PROVIDER_PROFILE" "$VENV_DIR/bin/python" "$INSTALL_DIR/runtime_check.py"
+  bootstrap_install_dir
   write_service
-  start_service
-  write_state
+  write_initial_state
+  run_integrated_deploy
   success "installation complete"
 }
 
