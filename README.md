@@ -17,6 +17,7 @@ AOI или bbox → поиск Sentinel-сцен → выбор срока → G
 - Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
 - Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
 - Provider-aware install/deploy wrappers: установка provider extras, интерактивный запрос ключей, preflight-проверка.
+- Автоматическая сборка land/shoreline mask из URL или локального ZIP/SHP/GeoJSON через `marine-track update-land-mask`.
 - Detection-aware поиск сцен: STAC-провайдеры фильтруются по наличию GeoTIFF/COG assets.
 - Для Sentinel-1 `/detectbbox` предпочитает Planetary Computer `sentinel-1-rtc`.
 - Materializer выбирает full-resolution GeoTIFF/COG asset, подписывает Planetary Computer URL при возможности и вырезает AOI.
@@ -29,7 +30,6 @@ AOI или bbox → поиск Sentinel-сцен → выбор срока → G
 
 ## Что пока не реализовано
 
-- Автоматическое скачивание/обновление coastline/land mask. Сейчас маска подключается файлом GeoJSON через `.env`.
 - Полноценный Sentinel-2 band stack B02/B03/B04/B08 + SCL/cloud/water mask.
 - Wake association вокруг каждого судна.
 - Heading/speed enrichment из wake geometry.
@@ -167,14 +167,30 @@ MARINE_TRACK_DETECTION_MAX_CROPS=10
 
 `MARINE_TRACK_PROVIDER_PROFILE` синхронизируется install/deploy-скриптами и управляет тем, какие provider modules проверяет `runtime_check.py`.
 
-Опционально для подавления береговых ложных целей:
+## Land/shoreline mask
+
+Для подавления береговых ложных целей нужен GeoJSON с полигонами суши в EPSG:4326. Его можно собрать автоматически из URL или локального ZIP/SHP/GeoJSON:
+
+```bash
+cd /opt/marine_track
+source .venv/bin/activate
+marine-track update-land-mask \
+  --output data/masks/land.geojson \
+  --cache-dir data/masks/cache \
+  --aoi data/aoi/example_black_sea.geojson \
+  --force
+```
+
+Затем прописать:
 
 ```text
 MARINE_TRACK_LAND_MASK_GEOJSON=/opt/marine_track/data/masks/land.geojson
 MARINE_TRACK_SHORELINE_BUFFER_M=500
+MARINE_TRACK_LAND_MASK_SOURCE_URL=https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_land.zip
+MARINE_TRACK_LAND_MASK_CACHE_DIR=data/masks/cache
 ```
 
-`MARINE_TRACK_LAND_MASK_GEOJSON` должен указывать на GeoJSON с полигонами суши в EPSG:4326. Маска перепроецируется в CRS растра, буферизуется на `MARINE_TRACK_SHORELINE_BUFFER_M` метров и применяется до local CFAR.
+`MARINE_TRACK_LAND_MASK_SOURCE_URL` можно заменить на локальный ZIP/SHP/GeoJSON или собственное зеркало. Маска перепроецируется в CRS растра, буферизуется на `MARINE_TRACK_SHORELINE_BUFFER_M` метров и применяется до local CFAR.
 
 ## Провайдеры и доступы
 
@@ -267,4 +283,4 @@ MARINE_TRACK_OUTPUT_DIR/detections/<token>/report.json
 
 См. `docs/IMPLEMENTATION_PLAN.md`.
 
-Ближайший следующий этап: автоматическое получение coastline/land mask, затем wake association и AIS track rendering.
+Ближайший следующий этап: wake association и AIS track rendering.
