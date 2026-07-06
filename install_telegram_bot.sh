@@ -113,15 +113,34 @@ copy_project() {
 }
 
 write_env_if_missing() {
-  if [[ -f "$ENV_FILE" ]]; then return 0; fi
-  run_root install -m 0640 -o root -g "$SERVICE_USER" "$INSTALL_DIR/.env.example" "$ENV_FILE"
-  if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
-    run_root sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}|" "$ENV_FILE"
+  if [[ ! -f "$ENV_FILE" ]]; then
+    run_root install -m 0640 -o root -g "$SERVICE_USER" "$INSTALL_DIR/.env.example" "$ENV_FILE"
+    if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
+      run_root sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}|" "$ENV_FILE"
+    fi
+    if [[ -n "${TELEGRAM_ADMIN_IDS:-}" ]]; then
+      run_root sed -i "s|^TELEGRAM_ADMIN_IDS=.*|TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS}|" "$ENV_FILE"
+    fi
+    warn "created $ENV_FILE; edit it before starting if credentials are empty"
   fi
-  if [[ -n "${TELEGRAM_ADMIN_IDS:-}" ]]; then
-    run_root sed -i "s|^TELEGRAM_ADMIN_IDS=.*|TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS}|" "$ENV_FILE"
-  fi
-  warn "created $ENV_FILE; edit it before starting if credentials are empty"
+  sync_env_defaults
+}
+
+sync_env_defaults() {
+  local template="$INSTALL_DIR/.env.example"
+  [[ -f "$template" && -f "$ENV_FILE" ]] || return 0
+  local added=0
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    local key="${line%%=*}"
+    if ! grep -q "^${key}=" "$ENV_FILE"; then
+      printf '\n%s\n' "$line" | run_root tee -a "$ENV_FILE" >/dev/null
+      added=$((added + 1))
+    fi
+  done < "$template"
+  [[ "$added" -gt 0 ]] && warn "added $added missing env keys to $ENV_FILE"
+  run_root chown root:"$SERVICE_USER" "$ENV_FILE"
+  run_root chmod 0640 "$ENV_FILE"
 }
 
 create_venv() {
