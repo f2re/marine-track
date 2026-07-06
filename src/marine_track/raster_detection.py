@@ -5,6 +5,7 @@ from pathlib import Path
 
 from marine_track.detection import adaptive_threshold_candidates
 from marine_track.geospatial import RasterGeoContext, pixel_to_lonlat
+from marine_track.land_mask import apply_land_mask
 from marine_track.models import VesselDetection
 from marine_track.raster import percentile_normalize
 
@@ -20,6 +21,8 @@ def detect_candidates_from_raster(
     max_area_px: int = 5000,
     local_window_px: int = 31,
     guard_window_px: int = 5,
+    land_mask_geojson: str | Path | None = None,
+    shoreline_buffer_m: float = 0.0,
 ) -> list[VesselDetection]:
     """Run the MVP candidate detector on one georeferenced raster band."""
     try:
@@ -31,6 +34,13 @@ def detect_candidates_from_raster(
         image = dataset.read(1).astype("float32")
         if dataset.nodata is not None:
             image[image == dataset.nodata] = float("nan")
+        image = apply_land_mask(
+            image,
+            dataset.transform,
+            dataset.crs,
+            land_mask_geojson,
+            shoreline_buffer_m,
+        )
         context = RasterGeoContext(transform=dataset.transform, crs=dataset.crs)
 
     normalized = percentile_normalize(image)
@@ -65,6 +75,8 @@ def detect_candidates_from_raster(
                     "threshold_sigma": threshold_sigma,
                     "local_window_px": local_window_px,
                     "guard_window_px": guard_window_px,
+                    "land_mask_geojson": str(land_mask_geojson) if land_mask_geojson else None,
+                    "shoreline_buffer_m": shoreline_buffer_m,
                 },
             )
         )
