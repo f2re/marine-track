@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from marine_track.cache_policy import cleanup_runtime
 from marine_track.config import load_config
 from marine_track.land_mask_update import DEFAULT_LAND_MASK_SOURCE_URL, update_land_mask as build_land_mask
 from marine_track.models import Sensor
@@ -131,6 +132,20 @@ def update_land_mask_command(
         "[green]Land mask ready[/green]: "
         f"{result.output_path} features={result.feature_count} clipped={result.clipped}"
     )
+
+
+@app.command("cleanup-cache")
+def cleanup_cache_command() -> None:
+    """Remove expired scene-search cache, raster cache and old detection outputs."""
+    reports = cleanup_runtime()
+    table = Table(title="Marine Track cleanup")
+    table.add_column("section")
+    table.add_column("files")
+    table.add_column("dirs")
+    table.add_column("bytes")
+    for name, report in reports.items():
+        table.add_row(name, str(report.removed_files), str(report.removed_dirs), str(report.removed_bytes))
+    console.print(table)
 
 
 if __name__ == "__main__":
