@@ -26,6 +26,12 @@ log() { printf '▶ %s\n' "$*" >&2; }
 success() { printf '✓ %s\n' "$*" >&2; }
 warn() { printf '! %s\n' "$*" >&2; }
 fail() { printf '✗ %s\n' "$*" >&2; exit 1; }
+on_error() {
+  local rc=$?
+  printf '✗ command failed at line %s with exit %s: %s\n' "$1" "$rc" "$2" >&2
+  exit "$rc"
+}
+trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
   cat <<EOF
@@ -134,6 +140,18 @@ require_ready_install() {
   [[ -d "$INSTALL_DIR" ]] || fail "$INSTALL_DIR does not exist; run install_telegram_bot.sh first"
   [[ -f "$ENV_FILE" ]] || fail "$ENV_FILE does not exist; run install_telegram_bot.sh first"
   id "$SERVICE_USER" >/dev/null 2>&1 || fail "service user not found: $SERVICE_USER"
+}
+
+ensure_root_access() {
+  [[ -z "$SUDO" ]] && return 0
+  command -v sudo >/dev/null 2>&1 || fail "root access is required, but sudo is not installed"
+  sudo -v || fail "root access is required for deploy. Run from a real sudo-capable shell or as root."
+}
+
+ensure_systemd_available() {
+  [[ "$NO_RESTART" -eq 1 ]] && return 0
+  command -v systemctl >/dev/null 2>&1 || fail "systemctl not found; this deploy script requires systemd"
+  systemctl list-unit-files >/dev/null 2>&1 || fail "systemd is not available from this shell; run deploy on the host VM with systemd, or use --no-restart only for file sync"
 }
 
 install_system_packages() {
@@ -528,6 +546,8 @@ main() {
   [[ "$STATUS_ONLY" -eq 1 ]] && exit 0
   require_ready_install
   confirm "Deploy Marine Track bot from $REPO_ROOT to $INSTALL_DIR with provider profile '$PROVIDER_PROFILE'?" || fail "cancelled"
+  ensure_root_access
+  ensure_systemd_available
   exec 9>"$DEPLOY_LOCK"
   flock -n 9 || fail "another deploy is running: $DEPLOY_LOCK"
   install_system_packages

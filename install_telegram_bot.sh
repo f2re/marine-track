@@ -24,6 +24,12 @@ log() { printf '▶ %s\n' "$*" >&2; }
 success() { printf '✓ %s\n' "$*" >&2; }
 warn() { printf '! %s\n' "$*" >&2; }
 fail() { printf '✗ %s\n' "$*" >&2; exit 1; }
+on_error() {
+  local rc=$?
+  printf '✗ command failed at line %s with exit %s: %s\n' "$1" "$rc" "$2" >&2
+  exit "$rc"
+}
+trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
   cat <<EOF
@@ -110,6 +116,17 @@ require_repo_files() {
   [[ -f "$REPO_ROOT/src/marine_track/telegram_bot.py" ]] || fail "telegram bot module not found"
 }
 
+ensure_root_access() {
+  [[ -z "$SUDO" ]] && return 0
+  command -v sudo >/dev/null 2>&1 || fail "root access is required, but sudo is not installed"
+  sudo -v || fail "root access is required for install. Run from a real sudo-capable shell or as root."
+}
+
+ensure_systemd_available() {
+  command -v systemctl >/dev/null 2>&1 || fail "systemctl not found; this installer requires systemd"
+  systemctl list-unit-files >/dev/null 2>&1 || fail "systemd is not available from this shell; run install on the host VM with systemd"
+}
+
 ensure_user() {
   id "$SERVICE_USER" >/dev/null 2>&1 || run_root useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
 }
@@ -180,6 +197,8 @@ main() {
   [[ "$STATUS_ONLY" -eq 1 ]] && exit 0
   require_repo_files
   confirm "Install Marine Track Telegram bot to $INSTALL_DIR with provider profile '$PROVIDER_PROFILE'?" || fail "cancelled"
+  ensure_root_access
+  ensure_systemd_available
   install_system_packages
   ensure_user
   bootstrap_install_dir
