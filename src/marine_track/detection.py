@@ -20,13 +20,15 @@ def adaptive_threshold_candidates(
     threshold_sigma: float = 3.5,
     min_area_px: int = 2,
     max_area_px: int = 5000,
+    local_window_px: int = 0,
+    guard_window_px: int = 0,
 ) -> list[PixelObject]:
-    """Minimal image-domain candidate detector.
+    """Detect bright compact candidates in a 2D raster.
 
-    This is a deliberately simple MVP primitive. For SAR it can be used after
-    calibration/geocoding/speckle reduction; for optical images after masking and
-    contrast normalization. Production detection must add local CFAR and coastline
-    suppression.
+    If `local_window_px` is greater than zero, a simple local-CFAR style detector is
+    used: pixels must exceed local mean + N * local std. Otherwise the legacy global
+    mean/std threshold is used. Shoreline/land masks are handled upstream by setting
+    masked pixels to NaN.
     """
     if image.ndim != 2:
         raise ValueError("image must be 2D")
@@ -34,11 +36,7 @@ def adaptive_threshold_candidates(
     if not finite.any():
         return []
 
-    values = image[finite]
-    threshold = float(values.mean() + threshold_sigma * values.std())
-    mask = np.zeros_like(image, dtype=bool)
-    mask[finite] = image[finite] > threshold
-
+    mask = cfar_mask(image, threshold_sigma, local_window_px, guard_window_px)
     labels, n = ndi.label(mask)
     objects = ndi.find_objects(labels)
     candidates: list[PixelObject] = []
@@ -52,8 +50,9 @@ def adaptive_threshold_candidates(
             continue
         cy, cx = ndi.center_of_mass(component)
         y0, x0 = slc[0].start, slc[1].start
-        y1, x1 = slc[0].stop, slc[1].stop
-        score = float(image[slc][component].mean())
+        y1, x1 = slc[0].stop
+        x1 = slc[1].stop
+        score = float(np.nanmean(image[slc][component]))
         candidates.append(
             PixelObject(
                 label=label_id,
@@ -64,3 +63,42 @@ def adaptive_threshold_candidates(
             )
         )
     return candidates
+
+
+def cfar_mask(
+    image: np.ndarray,
+    threshold_sigma: float,
+    local_window_px: int = 0,
+    guard_window_px: int = 0,
+) -> np.ndarray:
+    finite = np.isfinite(image)
+    if local_window_px <= 0:
+        values = image[finite]
+        threshold = float(values.mean() + threshold_sigma * values.std())
+        mask = np.zeros_like(image, dtype=bool)
+        mask[finite] = image[finite] > threshold
+        return mask
+
+    window = max(3, int(local_window_px))
+    if window % 2 == 0:
+        window += 1
+    safe = np.where(finite, image, 0.0).astype("float64")
+    weights = finite.astype("float64")
+    count = ndi.uniform_filter(weights, size=window, mode="constant")
+    summed = ndi.uniform_filter(safe, size=window, mode="constant")
+    squared = ndi.uniform_filter(safe * safe, size=window, mode="constant")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mean = np.divide(summed, count, out=np.zeros_like(summed), where=count > 0)
+        mean2 = np.divide(squared, count, out=np.zeros_like(squared), where=count > 0)
+    variance = np.maximum(mean2 - mean * mean, 0.0)
+    std = np.sqrt(variance)
+    threshold = mean + threshold_sigma * std
+    mask = finite & (image > threshold) & (count > 0.25)
+
+    guard = int(guard_window_px)
+    if guard > 0:
+        if guard % 2 == 0:
+            guard += 1
+        local_max = ndi.maximum_filter(np.where(finite, image, -np.inf), size=guard, mode="nearest")
+        mask &= image >= local_max
+    return mask
