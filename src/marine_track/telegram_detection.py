@@ -133,6 +133,13 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
             token,
             config.output_dir,
             config.detection_max_crops,
+            3.5,
+            2,
+            5000,
+            31,
+            5,
+            config.land_mask_geojson,
+            config.shoreline_buffer_m,
         )
     except MaterializationError as exc:
         await status.edit_text(
