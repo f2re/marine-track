@@ -81,6 +81,8 @@ DEPLOY_LOCK="/tmp/${SERVICE_NAME}.deploy.lock"
 if [[ "$(id -u)" -eq 0 ]]; then SUDO=""; else SUDO="sudo"; fi
 run_root() { if [[ -n "$SUDO" ]]; then sudo "$@"; else "$@"; fi; }
 run_user() { local user="$1"; shift; if [[ -n "$SUDO" ]]; then sudo -u "$user" "$@"; else runuser -u "$user" -- "$@"; fi; }
+root_grep_q() { local pattern="$1"; local file="$2"; if [[ -n "$SUDO" ]]; then sudo grep -q "$pattern" "$file"; else grep -q "$pattern" "$file"; fi; }
+root_sed_print() { if [[ -n "$SUDO" ]]; then sudo sed "$@"; else sed "$@"; fi; }
 
 confirm() {
   [[ "$ASSUME_YES" -eq 1 ]] && return 0
@@ -119,7 +121,7 @@ print_status() {
   if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "${SERVICE_NAME}.service" >/dev/null 2>&1; then
     printf 'active: ' >&2; systemctl is-active "${SERVICE_NAME}.service" >&2 || true
   fi
-  [[ -f "$STATE_FILE" ]] && sed 's/^/state: /' "$STATE_FILE" >&2 || true
+  [[ -f "$STATE_FILE" ]] && root_sed_print 's/^/state: /' "$STATE_FILE" >&2 || true
 }
 
 require_ready_install() {
@@ -158,7 +160,7 @@ sync_env_defaults() {
   while IFS= read -r line; do
     [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
     local key="${line%%=*}"
-    if ! grep -q "^${key}=" "$ENV_FILE"; then
+    if ! root_grep_q "^${key}=" "$ENV_FILE"; then
       printf '\n%s\n' "$line" | run_root tee -a "$ENV_FILE" >/dev/null
       added=$((added + 1))
     fi
@@ -172,7 +174,7 @@ sync_env_defaults() {
 set_env_key() {
   local key="$1"
   local value="$2"
-  if grep -q "^${key}=" "$ENV_FILE"; then
+  if root_grep_q "^${key}=" "$ENV_FILE"; then
     run_root sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
   else
     printf '\n%s=%s\n' "$key" "$value" | run_root tee -a "$ENV_FILE" >/dev/null
@@ -206,7 +208,7 @@ restart_service() {
 }
 
 register_commands() {
-  if grep -q '^TELEGRAM_BOT_TOKEN=.' "$ENV_FILE"; then
+  if root_grep_q '^TELEGRAM_BOT_TOKEN=.' "$ENV_FILE"; then
     run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" "$INSTALL_DIR/register_telegram_commands.py" || warn "command registration failed"
   else
     warn "command registration skipped because bot token is empty"
@@ -215,7 +217,7 @@ register_commands() {
 
 write_state() {
   local installed_at
-  installed_at="$(grep '^installed_at=' "$STATE_FILE" 2>/dev/null | cut -d= -f2- || true)"
+  installed_at="$({ run_root grep '^installed_at=' "$STATE_FILE" 2>/dev/null || true; } | cut -d= -f2-)"
   cat <<EOF | run_root tee "$STATE_FILE" >/dev/null
 installed_at=$installed_at
 last_deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
