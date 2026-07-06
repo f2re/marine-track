@@ -34,10 +34,18 @@ class Scene(BaseModel):
     acquisition_time: datetime
     footprint_wkt: str | None = None
     download_url: str | None = None
+    assets: dict[str, str] = Field(default_factory=dict)
     cloud_cover: float | None = None
-    polarization: str | None = None
+    polarizations: list[str] | None = None
     beam_mode: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def polarization_label(self) -> str:
+        if self.polarizations:
+            return ",".join(self.polarizations)
+        if self.cloud_cover is not None:
+            return f"cloud={self.cloud_cover:.1f}"
+        return "-"
 
 
 class VesselDetection(BaseModel):
