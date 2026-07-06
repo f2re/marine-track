@@ -5,13 +5,13 @@ from datetime import datetime
 from pathlib import Path
 
 from marine_track.assets import write_asset_manifest, write_scenes_json
-from marine_track.data_sources import SearchRequest, default_stac_providers
+from marine_track.data_sources import SearchRequest, SentinelHubProvider, default_stac_providers
 from marine_track.models import Scene, Sensor
 from marine_track.scene_materializer import select_processing_asset
 
 DETECTION_PROVIDER_ORDER = {
-    Sensor.SENTINEL1: ["planetary_computer", "copernicus_cdse"],
-    Sensor.SENTINEL2: ["planetary_computer", "earthsearch", "copernicus_cdse"],
+    Sensor.SENTINEL1: ["planetary_computer", "copernicus_cdse", "sentinelhub"],
+    Sensor.SENTINEL2: ["planetary_computer", "earthsearch", "copernicus_cdse", "sentinelhub"],
 }
 
 
@@ -34,7 +34,7 @@ def search_detection_capable_scenes(
 ) -> DetectionSceneSearchResult:
     output.mkdir(parents=True, exist_ok=True)
     errors: list[str] = []
-    providers = {provider.name: provider for provider in default_stac_providers()}
+    providers = {provider.name: provider for provider in [*default_stac_providers(), SentinelHubProvider()]}
 
     for concrete_sensor in resolve_sensor_order(sensor):
         request = SearchRequest(
