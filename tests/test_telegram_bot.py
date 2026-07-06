@@ -1,6 +1,6 @@
 from marine_track.models import Sensor
-from marine_track.telegram_bot import bbox_geojson, parse_hours, parse_sensor
 from marine_track.telegram_config import parse_admin_ids
+from marine_track.telegram_scene_browser import bbox_geojson, parse_scene_hours, parse_scene_sensor
 
 
 def test_id_list_parser():
@@ -8,14 +8,14 @@ def test_id_list_parser():
 
 
 def test_sensor_aliases():
-    assert parse_sensor("s1", Sensor.AUTO) == Sensor.SENTINEL1
-    assert parse_sensor("s2", Sensor.AUTO) == Sensor.SENTINEL2
-    assert parse_sensor(None, Sensor.AUTO) == Sensor.AUTO
+    assert parse_scene_sensor("s1", Sensor.AUTO) == Sensor.SENTINEL1
+    assert parse_scene_sensor("s2", Sensor.AUTO) == Sensor.SENTINEL2
+    assert parse_scene_sensor(None, Sensor.AUTO) == Sensor.AUTO
 
 
 def test_hours_parser():
-    assert parse_hours("72", 24) == 72
-    assert parse_hours(None, 24) == 24
+    assert parse_scene_hours("72", 24) == 72
+    assert parse_scene_hours(None, 24) == 24
 
 
 def test_bbox_payload():
