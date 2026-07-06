@@ -7,6 +7,9 @@ BOT_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand("help", "❓ Команды и примеры"),
     BotCommand("status", "⚙️ Статус конфигурации"),
     BotCommand("whoami", "🆔 Показать Telegram user id"),
+    BotCommand("dates", "🕒 Доступные сроки снимков по AOI"),
+    BotCommand("bboxdates", "🗺️ Сроки снимков по bbox"),
+    BotCommand("image", "📷 Отправить preview снимка по token"),
     BotCommand("search", "🛰️ Поиск Sentinel-сцен по AOI"),
     BotCommand("bbox", "🗺️ Поиск Sentinel-сцен по bbox"),
 )
