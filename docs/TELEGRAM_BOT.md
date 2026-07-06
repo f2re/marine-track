@@ -1,14 +1,14 @@
 # Telegram bot deployment
 
-Marine Track can run as a Telegram bot on top of the existing CLI pipeline. The bot searches Sentinel scenes by configured AOI or by bbox, writes provenance files, sends preview/quicklook for selected acquisition times, and can run the first detection skeleton for scene tokens that contain a processable GeoTIFF/COG asset.
+Marine Track can run as a Telegram bot on top of the detection pipeline. The bot searches Sentinel scenes by configured AOI or bbox, writes provenance files, sends preview/quicklook for selected acquisition times, and can run detection for scene tokens that contain a processable GeoTIFF/COG asset.
 
 ## Commands
 
 ```text
-/start   — start message
-/help    — command examples
-/status  — effective configuration
-/whoami  — Telegram user id for TELEGRAM_ADMIN_IDS
+/start
+/help
+/status
+/whoami
 /dates [auto|sentinel1|sentinel2] [hours]
 /bboxdates [auto|sentinel1|sentinel2] west south east north [hours]
 /image token
@@ -31,13 +31,11 @@ Examples:
 - `📷` downloads and sends the best available preview asset.
 - `🔎 Детекция` runs detection for the same scene token.
 
-Preview priority: thumbnail, rendered preview, overview, preview, quicklook, browse, visual/true-color assets, then image-like assets.
-
 `/detect` supports only full-resolution GeoTIFF/COG assets. It intentionally does not process ASF ZIP/GRD archives as rasters. If a selected scene has only preview or archive assets, the bot returns a clear error.
 
-`/detectbbox` searches only detection-capable STAC providers and filters scenes to those that expose GeoTIFF/COG assets. For Sentinel-1 this prefers Planetary Computer `sentinel-1-rtc` before falling back to other STAC sources. The AOI geometry is persisted in `scene_registry.json`, so the raster materializer crops the source raster to the requested aquatory before running the detector.
+`/detectbbox` searches only detection-capable STAC providers and filters scenes to those that expose GeoTIFF/COG assets. For Sentinel-1 this prefers Planetary Computer `sentinel-1-rtc`. The AOI geometry is persisted in `scene_registry.json`; the materializer reprojects it to the raster CRS and crops the source raster before running local CFAR detection.
 
-Detection output:
+## Detection output
 
 ```text
 MARINE_TRACK_OUTPUT_DIR/detections/<token>/overview.png
@@ -47,6 +45,8 @@ MARINE_TRACK_OUTPUT_DIR/detections/<token>/detections.csv
 MARINE_TRACK_OUTPUT_DIR/detections/<token>/detections.parquet
 MARINE_TRACK_OUTPUT_DIR/detections/<token>/report.json
 ```
+
+`report.json` contains product provenance, raster key/path, AOI crop status, detector parameters and detections.
 
 ## Environment
 
@@ -61,6 +61,24 @@ MARINE_TRACK_DEFAULT_SENSOR=auto
 MARINE_TRACK_DEFAULT_LOOKBACK_HOURS=72
 MARINE_TRACK_MAX_RESULTS=10
 MARINE_TRACK_MAX_CONCURRENT_JOBS=1
+```
+
+Provider variables, when needed:
+
+```text
+EARTHDATA_USERNAME=
+EARTHDATA_PASSWORD=
+EARTHDATA_TOKEN=
+CDSE_CLIENT_ID=
+CDSE_CLIENT_SECRET=
+CDSE_USERNAME=
+CDSE_PASSWORD=
+SENTINELHUB_CLIENT_ID=
+SENTINELHUB_CLIENT_SECRET=
+COPERNICUSMARINE_SERVICE_USERNAME=
+COPERNICUSMARINE_SERVICE_PASSWORD=
+GFW_API_TOKEN=
+AISHUB_API_KEY=
 ```
 
 If `TELEGRAM_ADMIN_IDS` is empty, operational commands are open to all users. If it is set, only those numeric Telegram ids can run them. Use `/whoami` to get the id.
@@ -80,7 +98,7 @@ Default paths:
 /etc/systemd/system/marine-track-bot.service
 ```
 
-Status:
+Status and logs:
 
 ```bash
 bash install_telegram_bot.sh --status
@@ -92,7 +110,10 @@ sudo journalctl -u marine-track-bot.service -n 100 --no-pager
 
 ```bash
 git pull
+python -m pytest -q
+ruff check src tests
 bash deploy_telegram_bot.sh --yes
+python register_telegram_commands.py
 ```
 
 With system package refresh:
@@ -113,16 +134,6 @@ MARINE_TRACK_OUTPUT_DIR/previews/
 ```
 
 The registry maps short tokens to full scene metadata, provider, sensor, AOI geometry, `scenes.json` and `assets.csv`. Detection commands load the same token from this registry.
-
-## Command registration
-
-Manual registration from installed directory:
-
-```bash
-cd /opt/marine_track
-source .venv/bin/activate
-python register_telegram_commands.py
-```
 
 ## Runtime check
 
