@@ -2,19 +2,27 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from marine_track.data_sources.base import SceneProvider, SearchRequest
 from marine_track.models import Scene, Sensor
+from marine_track.provider_auth import bearer_headers, cdse_access_token
 
 PREVIEW_LINK_RELS = {"thumbnail", "preview", "overview", "alternate"}
 
 
 class STACProvider(SceneProvider):
-    def __init__(self, name: str, api_url: str, collections: dict[Sensor, list[str]]):
+    def __init__(
+        self,
+        name: str,
+        api_url: str,
+        collections: dict[Sensor, list[str]],
+        headers_provider: Callable[[], dict[str, str]] | None = None,
+    ):
         self.name = name
         self.api_url = api_url
         self.collections = collections
+        self.headers_provider = headers_provider
         self.supported_sensors = set(collections)
 
     def search(self, request: SearchRequest) -> list[Scene]:
@@ -28,8 +36,9 @@ class STACProvider(SceneProvider):
 
         geometry = _aoi_geometry(aoi)
         interval = f"{request.start.isoformat()}/{request.end.isoformat()}"
+        headers = self.headers_provider() if self.headers_provider else None
 
-        client = Client.open(self.api_url)
+        client = Client.open(self.api_url, headers=headers)
         search = client.search(
             collections=self.collections[request.sensor],
             intersects=geometry,
@@ -106,6 +115,10 @@ def _parse_polarizations(value: object) -> list[str] | None:
     return [str(value)]
 
 
+def cdse_headers() -> dict[str, str]:
+    return bearer_headers(cdse_access_token())
+
+
 def default_stac_providers() -> list[STACProvider]:
     return [
         STACProvider(
@@ -115,6 +128,7 @@ def default_stac_providers() -> list[STACProvider]:
                 Sensor.SENTINEL1: ["SENTINEL-1"],
                 Sensor.SENTINEL2: ["SENTINEL-2"],
             },
+            headers_provider=cdse_headers,
         ),
         STACProvider(
             name="planetary_computer",
