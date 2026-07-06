@@ -6,7 +6,13 @@ from pathlib import Path
 
 from marine_track.assets import write_asset_manifest, write_scenes_json
 from marine_track.config import AppConfig, load_config
-from marine_track.data_sources import ASFProvider, SearchRequest, SourceManager, default_stac_providers
+from marine_track.data_sources import (
+    ASFProvider,
+    SearchRequest,
+    SentinelHubProvider,
+    SourceManager,
+    default_stac_providers,
+)
 from marine_track.models import Scene, Sensor
 
 
@@ -24,7 +30,7 @@ def parse_utc_datetime(value: str) -> datetime:
 
 
 def build_source_manager() -> SourceManager:
-    providers = [ASFProvider(), *default_stac_providers()]
+    providers = [ASFProvider(), *default_stac_providers(), SentinelHubProvider()]
     return SourceManager(providers)
 
 
