@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 
-from marine_track.estimation import LonLat, bearing_deg, haversine_distance_m, speed_from_displacement
+from marine_track.estimation import (
+    LonLat,
+    bearing_deg,
+    haversine_distance_m,
+    speed_from_displacement,
+)
 from marine_track.models import VesselDetection
 
 
@@ -41,7 +46,7 @@ def read_ais_csv(path: str | Path) -> pd.DataFrame:
 def interpolate_track_position(group: pd.DataFrame, target_time: datetime) -> AISPoint | None:
     """Linearly interpolate one MMSI track to target_time."""
     if target_time.tzinfo is None:
-        target_time = target_time.replace(tzinfo=pd.Timestamp.utcnow().tzinfo)
+        target_time = target_time.replace(tzinfo=timezone.utc)
     target = pd.Timestamp(target_time)
     before = group[group["time"] <= target].tail(1)
     after = group[group["time"] >= target].head(1)
@@ -85,7 +90,9 @@ def match_detection_to_ais(
 ) -> dict[str, object] | None:
     """Find the nearest AIS track point interpolated to the detection time."""
     t = pd.Timestamp(detection.acquisition_time)
-    window = ais_df[(ais_df["time"] >= t - time_window) & (ais_df["time"] <= t + time_window)]
+    window = ais_df[
+        (ais_df["time"] >= t - time_window) & (ais_df["time"] <= t + time_window)
+    ]
     if window.empty:
         return None
 
@@ -95,7 +102,8 @@ def match_detection_to_ais(
         point = interpolate_track_position(group, detection.acquisition_time)
         if point is None:
             continue
-        distance_m = haversine_distance_m(det_point, LonLat(lon=point.lon, lat=point.lat))
+        point_lonlat = LonLat(lon=point.lon, lat=point.lat)
+        distance_m = haversine_distance_m(det_point, point_lonlat)
         if distance_m > max_distance_m:
             continue
         if best is None or distance_m < float(best["distance_m"]):
