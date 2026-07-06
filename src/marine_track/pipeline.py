@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from marine_track.config import AppConfig
+from marine_track.assets import write_asset_manifest, write_scenes_json
+from marine_track.config import AppConfig, load_config
 from marine_track.data_sources import ASFProvider, SearchRequest, SourceManager, default_stac_providers
 from marine_track.models import Scene, Sensor
+
+
+@dataclass(frozen=True)
+class SearchStageResult:
+    provider: str
+    sensor: Sensor
+    scene_count: int
+    scenes_json: Path
+    asset_manifest: Path | None
 
 
 def parse_utc_datetime(value: str) -> datetime:
@@ -59,3 +70,33 @@ def search_scenes_with_fallback(
             errors.append(f"{concrete_sensor.value}: {exc}")
 
     raise RuntimeError("No scenes found. " + "; ".join(errors))
+
+
+def run_search_stage(
+    aoi: Path,
+    start: datetime,
+    end: datetime,
+    sensor: Sensor,
+    output: Path,
+    max_results: int = 50,
+    write_manifest: bool = True,
+) -> SearchStageResult:
+    output.mkdir(parents=True, exist_ok=True)
+    config = load_config()
+    provider, concrete_sensor, scenes = search_scenes_with_fallback(
+        config=config,
+        aoi=aoi,
+        start=start,
+        end=end,
+        sensor=sensor,
+        max_results=max_results,
+    )
+    scenes_json = write_scenes_json(scenes, output / "scenes.json")
+    asset_manifest = write_asset_manifest(scenes, output / "assets.csv") if write_manifest else None
+    return SearchStageResult(
+        provider=provider,
+        sensor=concrete_sensor,
+        scene_count=len(scenes),
+        scenes_json=scenes_json,
+        asset_manifest=asset_manifest,
+    )
