@@ -94,11 +94,13 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     token = tokens[0]
     first_scene = result.scenes[0]
+    search_cache_status = "hit" if result.cache_hit else "refresh"
     await status.edit_text(
         "Найдена сцена для детекции:\n"
         f"token: {token}\n"
         f"provider: {result.provider}\n"
         f"sensor: {result.sensor.value}\n"
+        f"search_cache: {search_cache_status}\n"
         f"time: {first_scene.acquisition_time.isoformat()}\n"
         f"product: {first_scene.product_id[:120]}\n\n"
         "Запускаю обработку."
@@ -159,6 +161,7 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
 def summary_text(result: DetectionRunResult) -> str:
     scene = result.materialized.scene
     crop_status = "yes" if result.materialized.cropped else "no"
+    raster_cache_status = "hit" if result.materialized.cache_hit else "created"
     return (
         "✅ Детекция завершена\n"
         f"token: {result.token}\n"
@@ -168,6 +171,7 @@ def summary_text(result: DetectionRunResult) -> str:
         f"product: {scene.product_id[:120]}\n"
         f"detections: {len(result.detections)}\n"
         f"raster: {result.materialized.raster_key}\n"
+        f"raster_cache: {raster_cache_status}\n"
         f"aoi_crop: {crop_status}"
     )
 
