@@ -41,7 +41,11 @@ aux-providers = [
   "copernicusmarine>=2.0"
 ]
 providers = [
-  "marine-track[scene-providers,aux-providers]"
+  "pystac-client>=0.7",
+  "planetary-computer>=1.0",
+  "asf-search>=7.0",
+  "sentinelhub>=3.10",
+  "copernicusmarine>=2.0"
 ]
 dev = [
   "pytest>=8.0",
