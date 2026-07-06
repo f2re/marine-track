@@ -32,6 +32,7 @@ CORE_MODULES = (
     "marine_track.detection_scene_search",
     "marine_track.scene_materializer",
     "marine_track.land_mask",
+    "marine_track.land_mask_update",
     "marine_track.provider_auth",
     "marine_track.ais_sources",
     "marine_track.noaa_ais_source",
