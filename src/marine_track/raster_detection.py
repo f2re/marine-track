@@ -18,8 +18,10 @@ def detect_candidates_from_raster(
     threshold_sigma: float = 3.5,
     min_area_px: int = 2,
     max_area_px: int = 5000,
+    local_window_px: int = 31,
+    guard_window_px: int = 5,
 ) -> list[VesselDetection]:
-    """Run the simple MVP candidate detector on one georeferenced raster band."""
+    """Run the MVP candidate detector on one georeferenced raster band."""
     try:
         import rasterio
     except ImportError as exc:  # pragma: no cover - environment dependent
@@ -37,6 +39,8 @@ def detect_candidates_from_raster(
         threshold_sigma=threshold_sigma,
         min_area_px=min_area_px,
         max_area_px=max_area_px,
+        local_window_px=local_window_px,
+        guard_window_px=guard_window_px,
     )
 
     detections: list[VesselDetection] = []
@@ -54,6 +58,14 @@ def detect_candidates_from_raster(
                 acquisition_time=acquisition_time,
                 confidence=_score_to_confidence(candidate.score),
                 wake_type="ship_candidate",
+                metadata={
+                    "area_px": candidate.area_px,
+                    "bbox_yx": list(candidate.bbox_yx),
+                    "detector": "local_cfar" if local_window_px > 0 else "global_threshold",
+                    "threshold_sigma": threshold_sigma,
+                    "local_window_px": local_window_px,
+                    "guard_window_px": guard_window_px,
+                },
             )
         )
     return detections
