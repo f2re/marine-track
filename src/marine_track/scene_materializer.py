@@ -34,6 +34,8 @@ class MaterializedScene:
     raster_key: str
     raster_href: str
     raster_path: Path
+    aoi_geojson: dict[str, object] | None = None
+    cropped: bool = False
 
 
 class MaterializationError(RuntimeError):
@@ -59,16 +61,21 @@ def materialize_scene_from_token(
         )
     raster_key, raster_href = selected
     work_dir = (cache_dir or output_dir / "materialized") / token
-    raster_path = materialize_asset(raster_href, work_dir, raster_key)
+    provider = str(record.get("provider") or scene.provider)
+    aoi_geojson = record.get("aoi_geojson") if isinstance(record.get("aoi_geojson"), dict) else None
+    signed_href = sign_href_if_needed(raster_href, provider)
+    raster_path, cropped = materialize_asset(signed_href, work_dir, raster_key, aoi_geojson)
     return MaterializedScene(
         token=token,
         scene=scene,
-        provider=str(record.get("provider") or scene.provider),
+        provider=provider,
         sensor=str(record.get("sensor") or scene.sensor.value),
         work_dir=work_dir,
         raster_key=raster_key,
         raster_href=raster_href,
         raster_path=raster_path,
+        aoi_geojson=aoi_geojson,
+        cropped=cropped,
     )
 
 
@@ -112,7 +119,22 @@ def suffix_from_href(href: str) -> str:
     return Path(parsed.path).suffix.lower()
 
 
-def materialize_asset(href: str, work_dir: Path, key: str) -> Path:
+def sign_href_if_needed(href: str, provider: str) -> str:
+    if provider != "planetary_computer":
+        return href
+    try:
+        import planetary_computer
+    except ImportError:
+        return href
+    return str(planetary_computer.sign_url(href))
+
+
+def materialize_asset(
+    href: str,
+    work_dir: Path,
+    key: str,
+    aoi_geojson: dict[str, object] | None = None,
+) -> tuple[Path, bool]:
     suffix = suffix_from_href(href)
     if suffix in ARCHIVE_EXTENSIONS:
         raise MaterializationError(f"Archive assets are not supported yet: {href}")
@@ -121,15 +143,62 @@ def materialize_asset(href: str, work_dir: Path, key: str) -> Path:
     work_dir.mkdir(parents=True, exist_ok=True)
     target = work_dir / f"{safe_filename(key)}_{short_hash(href)}{suffix}"
     if target.is_file() and target.stat().st_size > 0:
-        return target
+        return target, aoi_geojson is not None
+    if aoi_geojson is not None:
+        crop_raster_to_aoi(href, target, aoi_geojson)
+        return target, True
     if href.startswith(("http://", "https://")):
         download_url(href, target)
-        return target
+        return target, False
     source = Path(href)
     if source.is_file():
         target.write_bytes(source.read_bytes())
-        return target
+        return target, False
     raise MaterializationError(f"Asset path is not readable: {href}")
+
+
+def crop_raster_to_aoi(href: str, target: Path, aoi_geojson: dict[str, object]) -> None:
+    try:
+        import rasterio
+        from rasterio.mask import mask
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise MaterializationError("rasterio is required for AOI crop") from exc
+
+    geometries = extract_geometries(aoi_geojson)
+    if not geometries:
+        raise MaterializationError("AOI GeoJSON does not contain geometries")
+    try:
+        with rasterio.open(href) as dataset:
+            data, transform = mask(dataset, geometries, crop=True, filled=True)
+            profile = dataset.profile.copy()
+            profile.update(
+                driver="GTiff",
+                height=data.shape[1],
+                width=data.shape[2],
+                transform=transform,
+                count=data.shape[0],
+                compress="deflate",
+                tiled=True,
+            )
+            with rasterio.open(target, "w", **profile) as output:
+                output.write(data)
+    except Exception as exc:
+        raise MaterializationError(f"Failed to crop raster to AOI: {exc}") from exc
+    if not target.is_file() or target.stat().st_size == 0:
+        raise MaterializationError("AOI crop produced empty raster")
+
+
+def extract_geometries(aoi_geojson: dict[str, object]) -> list[dict[str, object]]:
+    geo_type = aoi_geojson.get("type")
+    if geo_type == "FeatureCollection":
+        features = aoi_geojson.get("features") or []
+        return [feature["geometry"] for feature in features if isinstance(feature, dict) and feature.get("geometry")]
+    if geo_type == "Feature":
+        geometry = aoi_geojson.get("geometry")
+        return [geometry] if isinstance(geometry, dict) else []
+    if isinstance(geo_type, str):
+        return [aoi_geojson]
+    return []
 
 
 def download_url(url: str, target: Path) -> None:
