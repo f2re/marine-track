@@ -31,6 +31,7 @@ dependencies = [
   "asf-search>=7.0",
   "sentinelhub>=3.10",
   "copernicusmarine>=2.0",
+  "python-telegram-bot>=22,<23",
   "pyarrow>=14.0"
 ]
 
@@ -43,6 +44,7 @@ dev = [
 
 [project.scripts]
 marine-track = "marine_track.cli:app"
+marine-track-bot = "marine_track.telegram_bot:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/marine_track"]
