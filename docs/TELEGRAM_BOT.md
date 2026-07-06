@@ -13,8 +13,7 @@ Marine Track can run as a Telegram bot on top of the existing CLI pipeline. The 
 /bboxdates [auto|sentinel1|sentinel2] west south east north [hours]
 /image token
 /detect token
-/search [auto|sentinel1|sentinel2] [hours]
-/bbox [auto|sentinel1|sentinel2] west south east north [hours]
+/detectbbox [auto|sentinel1|sentinel2] west south east north [hours]
 ```
 
 Examples:
@@ -24,6 +23,7 @@ Examples:
 /bboxdates sentinel1 36.5 43.8 38.5 45.0 12
 /image 1a2b3c4d5e6f
 /detect 1a2b3c4d5e6f
+/detectbbox sentinel1 36.5 43.8 38.5 45.0 12
 ```
 
 `/dates` and `/bboxdates` search available scenes for the last 12 hours by default. The bot sends an inline keyboard with acquisition times. Each row has two actions:
@@ -33,7 +33,9 @@ Examples:
 
 Preview priority: thumbnail, rendered preview, overview, preview, quicklook, browse, visual/true-color assets, then image-like assets.
 
-`/detect` currently supports only full-resolution GeoTIFF/COG assets. It intentionally does not process ASF ZIP/GRD archives as rasters. If a selected scene has only preview or archive assets, the bot returns a clear error. This keeps the MVP honest until Sentinel-1 RTC / Sentinel-2 band materialization is implemented.
+`/detect` supports only full-resolution GeoTIFF/COG assets. It intentionally does not process ASF ZIP/GRD archives as rasters. If a selected scene has only preview or archive assets, the bot returns a clear error.
+
+`/detectbbox` searches only detection-capable STAC providers and filters scenes to those that expose GeoTIFF/COG assets. For Sentinel-1 this prefers Planetary Computer `sentinel-1-rtc` before falling back to other STAC sources. The AOI geometry is persisted in `scene_registry.json`, so the raster materializer crops the source raster to the requested aquatory before running the detector.
 
 Detection output:
 
@@ -61,7 +63,7 @@ MARINE_TRACK_MAX_RESULTS=10
 MARINE_TRACK_MAX_CONCURRENT_JOBS=1
 ```
 
-If `TELEGRAM_ADMIN_IDS` is empty, `/search`, `/bbox`, `/dates`, `/bboxdates`, `/image` and `/detect` are open to all users. If it is set, only those numeric Telegram ids can run operational commands. Use `/whoami` to get the id.
+If `TELEGRAM_ADMIN_IDS` is empty, operational commands are open to all users. If it is set, only those numeric Telegram ids can run them. Use `/whoami` to get the id.
 
 ## Install
 
@@ -110,7 +112,7 @@ MARINE_TRACK_OUTPUT_DIR/scene_registry.json
 MARINE_TRACK_OUTPUT_DIR/previews/
 ```
 
-The registry maps short tokens to full scene metadata, provider, sensor, `scenes.json` and `assets.csv`. Detection commands load the same token from this registry.
+The registry maps short tokens to full scene metadata, provider, sensor, AOI geometry, `scenes.json` and `assets.csv`. Detection commands load the same token from this registry.
 
 ## Command registration
 
