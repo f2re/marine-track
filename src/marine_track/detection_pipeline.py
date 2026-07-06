@@ -32,6 +32,8 @@ def run_detection_for_token(
     threshold_sigma: float = 3.5,
     min_area_px: int = 2,
     max_area_px: int = 5000,
+    local_window_px: int = 31,
+    guard_window_px: int = 5,
 ) -> DetectionRunResult:
     run_dir = output_dir / "detections" / token
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -45,6 +47,8 @@ def run_detection_for_token(
         threshold_sigma=threshold_sigma,
         min_area_px=min_area_px,
         max_area_px=max_area_px,
+        local_window_px=local_window_px,
+        guard_window_px=guard_window_px,
     )
 
     geojson = write_geojson(detections, run_dir / "detections.geojson")
@@ -57,7 +61,18 @@ def run_detection_for_token(
         title=f"{materialized.scene.sensor.value} {materialized.scene.acquisition_time.isoformat()}",
     )
     crop_pngs = render_crops(materialized.raster_path, detections, run_dir / "crops", max_crops)
-    report_json = write_report_json(run_dir / "report.json", token, materialized, detections, crop_pngs)
+    report_json = write_report_json(
+        run_dir / "report.json",
+        token,
+        materialized,
+        detections,
+        crop_pngs,
+        threshold_sigma=threshold_sigma,
+        min_area_px=min_area_px,
+        max_area_px=max_area_px,
+        local_window_px=local_window_px,
+        guard_window_px=guard_window_px,
+    )
     return DetectionRunResult(
         token=token,
         materialized=materialized,
@@ -92,6 +107,11 @@ def write_report_json(
     materialized: MaterializedScene,
     detections: list[VesselDetection],
     crop_pngs: list[Path],
+    threshold_sigma: float,
+    min_area_px: int,
+    max_area_px: int,
+    local_window_px: int,
+    guard_window_px: int,
 ) -> Path:
     payload = {
         "token": token,
@@ -101,6 +121,15 @@ def write_report_json(
         "acquisition_time": materialized.scene.acquisition_time.isoformat(),
         "raster_key": materialized.raster_key,
         "raster_path": str(materialized.raster_path),
+        "aoi_crop": materialized.cropped,
+        "detector": {
+            "name": "local_cfar" if local_window_px > 0 else "global_threshold",
+            "threshold_sigma": threshold_sigma,
+            "min_area_px": min_area_px,
+            "max_area_px": max_area_px,
+            "local_window_px": local_window_px,
+            "guard_window_px": guard_window_px,
+        },
         "detections_count": len(detections),
         "crop_count": len(crop_pngs),
         "detections": [detection.model_dump(mode="json") for detection in detections],
