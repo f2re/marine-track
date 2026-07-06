@@ -28,3 +28,21 @@ def pixel_to_lonlat(row: float, col: float, context: RasterGeoContext) -> LonLat
     transformer = Transformer.from_crs(source_crs, "EPSG:4326", always_xy=True)
     lon, lat = transformer.transform(x, y)
     return LonLat(lon=float(lon), lat=float(lat))
+
+
+def lonlat_to_pixel(lon: float, lat: float, transform: Any, crs: Any) -> tuple[float, float]:
+    """Convert lon/lat to fractional raster row/col."""
+    try:
+        from pyproj import CRS, Transformer
+        from rasterio.transform import rowcol
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError("rasterio and pyproj are required for geospatial conversion") from exc
+
+    target_crs = CRS.from_user_input(crs)
+    if target_crs.to_epsg() == 4326:
+        x, y = lon, lat
+    else:
+        transformer = Transformer.from_crs("EPSG:4326", target_crs, always_xy=True)
+        x, y = transformer.transform(lon, lat)
+    row, col = rowcol(transform, x, y, op=float)
+    return float(row), float(col)
