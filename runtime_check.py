@@ -39,6 +39,8 @@ REQUIRED_MODULES = (
     "marine_track.provider_auth",
     "marine_track.data_sources.sentinelhub_provider",
     "marine_track.copernicus_marine_provider",
+    "marine_track.ais_sources",
+    "marine_track.noaa_ais_source",
 )
 
 
