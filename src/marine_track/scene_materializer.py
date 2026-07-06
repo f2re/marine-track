@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from marine_track.cache_policy import raster_cache_path, touch_cache_file
 from marine_track.models import Scene
 from marine_track.telegram_scene_browser import find_scene
 
@@ -36,6 +37,7 @@ class MaterializedScene:
     raster_path: Path
     aoi_geojson: dict[str, object] | None = None
     cropped: bool = False
+    cache_hit: bool = False
 
 
 class MaterializationError(RuntimeError):
@@ -60,11 +62,24 @@ def materialize_scene_from_token(
             f"Available assets: {keys}"
         )
     raster_key, raster_href = selected
-    work_dir = (cache_dir or output_dir / "materialized") / token
     provider = str(record.get("provider") or scene.provider)
     aoi_geojson = record.get("aoi_geojson") if isinstance(record.get("aoi_geojson"), dict) else None
     signed_href = sign_href_if_needed(raster_href, provider)
-    raster_path, cropped = materialize_asset(signed_href, work_dir, raster_key, aoi_geojson)
+    suffix = suffix_from_href(raster_href)
+    if cache_dir is None:
+        target_path = raster_cache_path(
+            provider=provider,
+            product_id=scene.product_id,
+            asset_key=raster_key,
+            href=raster_href,
+            aoi_geojson=aoi_geojson,
+            suffix=suffix,
+        )
+        work_dir = target_path.parent
+    else:
+        work_dir = cache_dir / token
+        target_path = work_dir / f"{safe_filename(raster_key)}_{short_hash(raster_href)}{suffix}"
+    raster_path, cropped, cache_hit = materialize_asset(signed_href, target_path, aoi_geojson)
     return MaterializedScene(
         token=token,
         scene=scene,
@@ -76,6 +91,7 @@ def materialize_scene_from_token(
         raster_path=raster_path,
         aoi_geojson=aoi_geojson,
         cropped=cropped,
+        cache_hit=cache_hit,
     )
 
 
@@ -131,29 +147,33 @@ def sign_href_if_needed(href: str, provider: str) -> str:
 
 def materialize_asset(
     href: str,
-    work_dir: Path,
-    key: str,
+    target: Path,
     aoi_geojson: dict[str, object] | None = None,
-) -> tuple[Path, bool]:
+) -> tuple[Path, bool, bool]:
     suffix = suffix_from_href(href)
     if suffix in ARCHIVE_EXTENSIONS:
         raise MaterializationError(f"Archive assets are not supported yet: {href}")
     if suffix not in RASTER_EXTENSIONS:
         raise MaterializationError(f"Asset is not a GeoTIFF/COG: {href}")
-    work_dir.mkdir(parents=True, exist_ok=True)
-    target = work_dir / f"{safe_filename(key)}_{short_hash(href)}{suffix}"
+    target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_file() and target.stat().st_size > 0:
-        return target, aoi_geojson is not None
+        touch_cache_file(target)
+        return target, aoi_geojson is not None, True
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.unlink(missing_ok=True)
     if aoi_geojson is not None:
-        crop_raster_to_aoi(href, target, aoi_geojson)
-        return target, True
+        crop_raster_to_aoi(href, tmp, aoi_geojson)
+        tmp.replace(target)
+        return target, True, False
     if href.startswith(("http://", "https://")):
-        download_url(href, target)
-        return target, False
+        download_url(href, tmp)
+        tmp.replace(target)
+        return target, False, False
     source = Path(href)
     if source.is_file():
-        target.write_bytes(source.read_bytes())
-        return target, False
+        tmp.write_bytes(source.read_bytes())
+        tmp.replace(target)
+        return target, False, False
     raise MaterializationError(f"Asset path is not readable: {href}")
 
 
@@ -178,8 +198,10 @@ def crop_raster_to_aoi(href: str, target: Path, aoi_geojson: dict[str, object]) 
                 transform=transform,
                 count=data.shape[0],
                 compress="deflate",
-                tiled=True,
             )
+            profile.pop("blockxsize", None)
+            profile.pop("blockysize", None)
+            profile.pop("tiled", None)
             with rasterio.open(target, "w", **profile) as output:
                 output.write(data)
     except MaterializationError:
