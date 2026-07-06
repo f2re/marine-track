@@ -2,6 +2,36 @@
 
 Документ фиксирует только реально реализованные провайдеры. Источники без рабочего кода не должны попадать в `config/sources.yaml` priority.
 
+## Provider dependency profiles
+
+Provider-пакеты вынесены в optional extras. Это позволяет поставить все источники или сознательно пропустить тяжелые/неиспользуемые провайдеры.
+
+```bash
+# Все провайдеры: scene + auxiliary
+bash install_telegram_bot.sh --providers all --yes
+bash deploy_telegram_bot.sh --providers all --yes
+
+# Только спутниковые scene providers: ASF/STAC/Planetary Computer/Sentinel Hub
+bash install_telegram_bot.sh --providers scene --yes
+
+# Только auxiliary providers: Copernicus Marine
+bash install_telegram_bot.sh --providers aux --yes
+
+# Только core, без provider-пакетов
+bash install_telegram_bot.sh --providers core --yes
+```
+
+Профиль записывается в `.env` как `MARINE_TRACK_PROVIDER_PROFILE`. `runtime_check.py` читает `.env` и проверяет только выбранный набор provider modules. Если профиль `core`, scene/aux provider packages не требуются и runtime-check их не валит.
+
+Соответствие extras:
+
+| Profile | pip target | Проверяются runtime-check |
+|---|---|---|
+| `all` | `.[providers]` | core + scene + aux |
+| `scene` | `.[scene-providers]` | core + scene |
+| `aux` | `.[aux-providers]` | core + aux |
+| `core` / `none` | `.` | only core |
+
 ## Scene providers
 
 | Provider | Sensor | Код | Доступ | Примечание |
@@ -21,6 +51,14 @@
 | `noaa_marinecadastre` | `marine_track.noaa_ais_source.NOAAMarineCadastreProvider` | Public daily ZIP archive; base URL задается явно | Исторические AIS CSV ZIP-файлы, в основном US waters. |
 
 ## Переменные окружения
+
+### Provider profile
+
+```text
+MARINE_TRACK_PROVIDER_PROFILE=all
+```
+
+Допустимые значения: `all`, `scene`, `aux`, `core`, `none`. Значение управляет только установкой/проверкой Python provider packages. Настройки доступа ниже всё равно можно хранить в `.env`; они будут использованы, когда соответствующий provider установлен.
 
 ### ASF / NASA Earthdata
 
@@ -47,11 +85,11 @@ CDSE_PASSWORD=
 
 ### Planetary Computer
 
-Дополнительные credentials не требуются. Для assets используется библиотека `planetary-computer`, которая подписывает URL при materialization.
+Дополнительные credentials не требуются. Для assets используется библиотека `planetary-computer`, которая подписывает URL при materialization. Для этого нужен профиль `all` или `scene`.
 
 ### EarthSearch
 
-Дополнительные credentials не требуются. Используется публичный STAC endpoint Element84 EarthSearch v1.
+Дополнительные credentials не требуются. Используется публичный STAC endpoint Element84 EarthSearch v1. Для этого нужен профиль `all` или `scene`.
 
 ### Sentinel Hub
 
@@ -63,7 +101,7 @@ SENTINELHUB_TOKEN_URL=https://services.sentinel-hub.com/auth/realms/main/protoco
 SENTINELHUB_CATALOG_URL=https://services.sentinel-hub.com/api/v1/catalog/1.0.0/search
 ```
 
-Если задан `SENTINELHUB_ACCESS_TOKEN`, он используется напрямую. Иначе нужны OAuth client id/secret. Для Copernicus Data Space Sentinel Hub services переопределите `SENTINELHUB_TOKEN_URL` и `SENTINELHUB_CATALOG_URL` на CDSE endpoints.
+Если задан `SENTINELHUB_ACCESS_TOKEN`, он используется напрямую. Иначе нужны OAuth client id/secret. Для Copernicus Data Space Sentinel Hub services переопределите `SENTINELHUB_TOKEN_URL` и `SENTINELHUB_CATALOG_URL` на CDSE endpoints. Для этого нужен профиль `all` или `scene`.
 
 ### Copernicus Marine
 
@@ -72,7 +110,7 @@ COPERNICUSMARINE_SERVICE_USERNAME=
 COPERNICUSMARINE_SERVICE_PASSWORD=
 ```
 
-Если пользователь уже выполнил login через toolbox, username/password можно не задавать. Для server deployment лучше задать обе переменные в `.env`.
+Если пользователь уже выполнил login через toolbox, username/password можно не задавать. Для server deployment лучше задать обе переменные в `.env`. Для этого нужен профиль `all` или `aux`.
 
 ### Local AIS / tracks
 
@@ -86,7 +124,7 @@ MARINE_TRACK_AIS_CSV=/path/to/ais.csv
 mmsi,time,lon,lat,sog_knots,cog_deg
 ```
 
-`mmsi`, `time`, `lon`, `lat` обязательны. `sog_knots`, `cog_deg` опциональны.
+`mmsi`, `time`, `lon`, `lat` обязательны. `sog_knots`, `cog_deg` опциональны. Local AIS adapter входит в core и не требует provider extras.
 
 ### NOAA MarineCadastre
 
@@ -95,16 +133,17 @@ NOAA_MARINECADASTRE_BASE_URL=
 NOAA_MARINECADASTRE_CACHE_DIR=runs/noaa_ais
 ```
 
-`NOAA_MARINECADASTRE_BASE_URL` должен указывать на директорию, в которой доступны годовые поддиректории с daily ZIP archives в формате `AIS_YYYY_MM_DD.zip`. URL не захардкожен в коде намеренно: если NOAA изменит структуру или используется локальное зеркало, достаточно изменить `.env`.
+`NOAA_MARINECADASTRE_BASE_URL` должен указывать на директорию, в которой доступны годовые поддиректории с daily ZIP archives в формате `AIS_YYYY_MM_DD.zip`. URL не захардкожен в коде намеренно: если NOAA изменит структуру или используется локальное зеркало, достаточно изменить `.env`. Adapter входит в core и не требует provider extras.
 
 ## Проверка provider-аудита
 
 ```bash
-python runtime_check.py
+MARINE_TRACK_PROVIDER_PROFILE=all python runtime_check.py
+MARINE_TRACK_PROVIDER_PROFILE=core python runtime_check.py
 python -m pytest -q
 ```
 
-`runtime_check.py` проверяет импорты реализованных provider-модулей, обязательные пути и числовые env-переменные. Он не делает внешние сетевые запросы.
+`runtime_check.py` проверяет импорты provider-модулей согласно `MARINE_TRACK_PROVIDER_PROFILE`, обязательные пути и числовые env-переменные. Он не делает внешние сетевые запросы.
 
 ## Политика проекта по провайдерам
 
@@ -112,3 +151,4 @@ python -m pytest -q
 2. Провайдер не должен создавать фейковые raster assets. Если API возвращает только metadata/preview, detector должен честно отказаться от обработки.
 3. Любой auth flow должен быть управляем через `.env`, без токенов в коде.
 4. Если внешний API меняет endpoint, корректировка должна быть в `.env` или отдельном provider-классе, а не в detector pipeline.
+5. Если provider package не установлен по выбранному профилю, runtime-check не должен валить core deployment; рабочие команды должны давать понятную ошибку при попытке использовать отсутствующий provider.
