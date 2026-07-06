@@ -2,27 +2,38 @@
 
 Документ фиксирует только реально реализованные провайдеры. Источники без рабочего кода не должны попадать в `config/sources.yaml` priority.
 
+## Единый способ установки и деплоя
+
+Поддерживаются только два эксплуатационных shell-скрипта:
+
+```bash
+bash install_telegram_bot.sh --providers all
+bash deploy_telegram_bot.sh --providers all
+```
+
+`deploy_telegram_bot.sh` содержит всю логику, которая раньше была вынесена в отдельные helper scripts: запрос ключей, provider preflight, Telegram healthcheck, регистрация команд, подготовка land mask и cleanup.
+
 ## Provider dependency profiles
 
 Provider-пакеты вынесены в optional extras. Это позволяет поставить все источники или сознательно пропустить тяжелые/неиспользуемые провайдеры.
 
 ```bash
 # Все провайдеры: scene + auxiliary. Интерактивно спросит ключи активных providers.
-bash install_with_providers.sh --providers all
-bash deploy_with_providers.sh --providers all
+bash install_telegram_bot.sh --providers all
+bash deploy_telegram_bot.sh --providers all
 
-# Неинтерактивно: ключи не спрашиваются, preflight покажет недостающие доступы.
-bash install_with_providers.sh --providers all --yes
-bash deploy_with_providers.sh --providers all --yes
+# Неинтерактивно: доступы должны быть в environment или .env.
+bash install_telegram_bot.sh --providers all --yes
+bash deploy_telegram_bot.sh --providers all --yes
 
 # Только спутниковые scene providers: ASF/STAC/Planetary Computer/Sentinel Hub
-bash install_with_providers.sh --providers scene
+bash install_telegram_bot.sh --providers scene
 
 # Только auxiliary providers: Copernicus Marine плюс core AIS adapters
-bash install_with_providers.sh --providers aux
+bash install_telegram_bot.sh --providers aux
 
 # Только core, без provider-пакетов
-bash install_with_providers.sh --providers core --yes
+bash install_telegram_bot.sh --providers core --yes
 ```
 
 Профиль записывается в `.env` как `MARINE_TRACK_PROVIDER_PROFILE`. `runtime_check.py` читает `.env` и проверяет только выбранный набор provider modules. Если профиль `core`, scene/aux provider packages не требуются и runtime-check их не валит.
@@ -38,27 +49,9 @@ bash install_with_providers.sh --providers core --yes
 
 ## Интерактивная настройка ключей
 
-`install_with_providers.sh` и `deploy_with_providers.sh` вызывают `provider_configure.py`. Он проходит по активным провайдерам выбранного профиля, показывает краткую инструкцию и предлагает заполнить недостающие значения в `.env`. Уже заполненные значения не перезаписываются.
+`install_telegram_bot.sh` при первичной установке делегирует настройку в `deploy_telegram_bot.sh`. В интерактивном режиме deploy проходит по активным провайдерам выбранного профиля, показывает краткую инструкцию и предлагает заполнить недостающие значения в `.env`. Уже заполненные значения не перезаписываются.
 
-Ручной запуск:
-
-```bash
-sudo python3 /opt/marine_track/provider_configure.py \
-  --env-file /opt/marine_track/.env \
-  --profile all
-
-sudo chown root:marinetrack /opt/marine_track/.env
-sudo chmod 0640 /opt/marine_track/.env
-```
-
-Проверка без сетевых запросов:
-
-```bash
-sudo -u marinetrack /opt/marine_track/.venv/bin/python /opt/marine_track/runtime_check.py
-sudo -u marinetrack /opt/marine_track/.venv/bin/python /opt/marine_track/provider_preflight.py
-```
-
-`provider_preflight.py` падает только при отсутствии установленных provider-модулей, выбранных профилем. Отсутствующие ключи показываются как предупреждения, чтобы можно было поставить сервис заранее и добавить доступы позже.
+Проверка без сетевых запросов встроена в deploy. Она падает только при отсутствии установленных provider-модулей, выбранных профилем. Отсутствующие ключи показываются как предупреждения, чтобы можно было поставить сервис заранее и добавить доступы позже.
 
 ## Scene providers
 
@@ -86,7 +79,7 @@ sudo -u marinetrack /opt/marine_track/.venv/bin/python /opt/marine_track/provide
 MARINE_TRACK_PROVIDER_PROFILE=all
 ```
 
-Допустимые значения: `all`, `scene`, `aux`, `core`, `none`. Значение управляет только установкой/проверкой Python provider packages. Настройки доступа ниже всё равно можно хранить в `.env`; они будут использованы, когда соответствующий provider установлен.
+Допустимые значения: `all`, `scene`, `aux`, `core`, `none`. Значение управляет установкой и проверкой Python provider packages. Настройки доступа ниже всё равно можно хранить в `.env`; они будут использованы, когда соответствующий provider установлен.
 
 ### ASF / NASA Earthdata
 
@@ -168,11 +161,10 @@ NOAA_MARINECADASTRE_CACHE_DIR=runs/noaa_ais
 ```bash
 MARINE_TRACK_PROVIDER_PROFILE=all python runtime_check.py
 MARINE_TRACK_PROVIDER_PROFILE=core python runtime_check.py
-python provider_preflight.py
 python -m pytest -q
 ```
 
-`runtime_check.py` проверяет импорты provider-модулей согласно `MARINE_TRACK_PROVIDER_PROFILE`, обязательные пути и числовые env-переменные. Он не делает внешние сетевые запросы.
+`runtime_check.py` проверяет импорты provider-модулей согласно `MARINE_TRACK_PROVIDER_PROFILE`, обязательные пути и числовые env-переменные. Provider preflight встроен в `deploy_telegram_bot.sh` и не делает внешние сетевые запросы.
 
 ## Политика проекта по провайдерам
 
