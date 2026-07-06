@@ -10,6 +10,16 @@ from urllib.request import Request, urlopen
 
 from marine_track.models import Scene
 
+ASSET_MANIFEST_FIELDS = [
+    "scene_id",
+    "provider",
+    "sensor",
+    "acquisition_time",
+    "asset_key",
+    "href",
+    "local_path",
+]
+
 
 @dataclass(frozen=True)
 class AssetRecord:
@@ -62,10 +72,7 @@ def write_asset_manifest(scenes: list[Scene], path: str | Path) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     records = iter_asset_records(scenes)
     with p.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=["scene_id", "provider", "sensor", "acquisition_time", "asset_key", "href", "local_path"],
-        )
+        writer = csv.DictWriter(f, fieldnames=ASSET_MANIFEST_FIELDS)
         writer.writeheader()
         for record in records:
             writer.writerow(record.__dict__)
@@ -75,10 +82,8 @@ def write_asset_manifest(scenes: list[Scene], path: str | Path) -> Path:
 def write_scenes_json(scenes: list[Scene], path: str | Path) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(
-        json.dumps([scene.model_dump(mode="json") for scene in scenes], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    payload = [scene.model_dump(mode="json") for scene in scenes]
+    p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return p
 
 
