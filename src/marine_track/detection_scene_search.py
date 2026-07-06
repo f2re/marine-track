@@ -5,6 +5,12 @@ from datetime import datetime
 from pathlib import Path
 
 from marine_track.assets import write_asset_manifest, write_scenes_json
+from marine_track.cache_policy import (
+    read_scene_search_cache,
+    search_cache_key,
+    search_cache_path,
+    write_scene_search_cache,
+)
 from marine_track.data_sources import SearchRequest, SentinelHubProvider, default_stac_providers
 from marine_track.models import Scene, Sensor
 from marine_track.scene_materializer import select_processing_asset
@@ -22,6 +28,7 @@ class DetectionSceneSearchResult:
     scenes: list[Scene]
     scenes_json: Path
     asset_manifest: Path
+    cache_hit: bool = False
 
 
 def search_detection_capable_scenes(
@@ -33,6 +40,21 @@ def search_detection_capable_scenes(
     max_results: int = 20,
 ) -> DetectionSceneSearchResult:
     output.mkdir(parents=True, exist_ok=True)
+    cache_key = search_cache_key(aoi, start, end, sensor, max_results)
+    cached = read_scene_search_cache(search_cache_path(cache_key))
+    if cached is not None:
+        provider, concrete_sensor, scenes = cached
+        scenes_json = write_scenes_json(scenes, output / "scenes.json")
+        asset_manifest = write_asset_manifest(scenes, output / "assets.csv")
+        return DetectionSceneSearchResult(
+            provider=provider,
+            sensor=concrete_sensor,
+            scenes=scenes,
+            scenes_json=scenes_json,
+            asset_manifest=asset_manifest,
+            cache_hit=True,
+        )
+
     errors: list[str] = []
     providers = {provider.name: provider for provider in [*default_stac_providers(), SentinelHubProvider()]}
 
@@ -54,12 +76,14 @@ def search_detection_capable_scenes(
                 if processable:
                     scenes_json = write_scenes_json(processable, output / "scenes.json")
                     asset_manifest = write_asset_manifest(processable, output / "assets.csv")
+                    write_scene_search_cache(search_cache_path(cache_key), provider_name, concrete_sensor, processable)
                     return DetectionSceneSearchResult(
                         provider=provider_name,
                         sensor=concrete_sensor,
                         scenes=processable,
                         scenes_json=scenes_json,
                         asset_manifest=asset_manifest,
+                        cache_hit=False,
                     )
                 errors.append(f"{concrete_sensor.value}/{provider_name}: no GeoTIFF/COG assets")
             except Exception as exc:  # noqa: BLE001 - fallback must continue
