@@ -10,6 +10,7 @@ BOT_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand("dates", "🕒 Доступные сроки снимков по AOI"),
     BotCommand("bboxdates", "🗺️ Сроки снимков по bbox"),
     BotCommand("image", "📷 Отправить preview снимка по token"),
+    BotCommand("detect", "🔎 Детекция судов по scene token"),
     BotCommand("search", "🛰️ Поиск Sentinel-сцен по AOI"),
     BotCommand("bbox", "🗺️ Поиск Sentinel-сцен по bbox"),
 )
