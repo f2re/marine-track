@@ -7,6 +7,8 @@ from typing import Any
 from marine_track.data_sources.base import SceneProvider, SearchRequest
 from marine_track.models import Scene, Sensor
 
+PREVIEW_LINK_RELS = {"thumbnail", "preview", "overview", "alternate"}
+
 
 class STACProvider(SceneProvider):
     def __init__(self, name: str, api_url: str, collections: dict[Sensor, list[str]]):
@@ -46,11 +48,7 @@ class STACProvider(SceneProvider):
         else:
             acquisition_time = item.datetime
 
-        assets: dict[str, str] = {}
-        for key, asset in item.assets.items():
-            href = getattr(asset, "href", None)
-            if href:
-                assets[key] = href
+        assets = _collect_item_assets(item)
 
         return Scene(
             provider=self.name,
@@ -65,6 +63,29 @@ class STACProvider(SceneProvider):
             beam_mode=props.get("sar:instrument_mode"),
             metadata=dict(props),
         )
+
+
+def _collect_item_assets(item: Any) -> dict[str, str]:
+    assets: dict[str, str] = {}
+    for key, asset in item.assets.items():
+        href = getattr(asset, "href", None)
+        if href:
+            assets[key] = href
+
+    for link in getattr(item, "links", []) or []:
+        rel = str(getattr(link, "rel", "") or "").lower()
+        href = getattr(link, "href", None)
+        if not href or rel not in PREVIEW_LINK_RELS:
+            continue
+        key = rel
+        media_type = str(getattr(link, "media_type", "") or "").lower()
+        title = str(getattr(link, "title", "") or "").lower()
+        if "thumbnail" in title or "thumbnail" in media_type:
+            key = "thumbnail"
+        elif "preview" in title:
+            key = "preview"
+        assets.setdefault(key, href)
+    return assets
 
 
 def _aoi_geometry(aoi: dict[str, Any]) -> dict[str, Any]:
