@@ -14,18 +14,29 @@ preprocessing:
     target_resolution_m: 10
     required_bands: [B02, B03, B04, B08]
 
+detection_scene_search:
+  sentinel1_provider_order: [planetary_computer, copernicus_cdse]
+  sentinel2_provider_order: [planetary_computer, earthsearch, copernicus_cdse]
+  require_geotiff_or_cog: true
+  persist_aoi_geometry: true
+  crop_to_aoi_before_detection: true
+
 ship_detection:
   sar:
-    method: cfar
+    method: local_cfar
     min_area_px: 2
     max_area_px: 5000
-    local_window_px: 128
+    local_window_px: 31
+    guard_window_px: 5
     threshold_sigma: 3.5
 
   optical:
-    method: adaptive_threshold
+    method: local_cfar
     min_area_px: 2
     max_area_px: 3000
+    local_window_px: 31
+    guard_window_px: 5
+    threshold_sigma: 3.5
     contrast_percentile: 98.5
 
 wake_detection:
