@@ -1,5 +1,3 @@
-import os
-
 from marine_track.provider_auth import bearer_headers, env_first
 
 
