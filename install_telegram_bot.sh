@@ -76,6 +76,8 @@ STATE_FILE="$INSTALL_DIR/.install-state"
 if [[ "$(id -u)" -eq 0 ]]; then SUDO=""; else SUDO="sudo"; fi
 run_root() { if [[ -n "$SUDO" ]]; then sudo "$@"; else "$@"; fi; }
 run_user() { local user="$1"; shift; if [[ -n "$SUDO" ]]; then sudo -u "$user" "$@"; else runuser -u "$user" -- "$@"; fi; }
+root_grep_q() { local pattern="$1"; local file="$2"; if [[ -n "$SUDO" ]]; then sudo grep -q "$pattern" "$file"; else grep -q "$pattern" "$file"; fi; }
+root_sed_print() { if [[ -n "$SUDO" ]]; then sudo sed "$@"; else sed "$@"; fi; }
 
 confirm() {
   [[ "$ASSUME_YES" -eq 1 ]] && return 0
@@ -110,7 +112,7 @@ print_status() {
     printf 'active: ' >&2; systemctl is-active "${SERVICE_NAME}.service" >&2 || true
     printf 'enabled: ' >&2; systemctl is-enabled "${SERVICE_NAME}.service" >&2 || true
   fi
-  [[ -f "$STATE_FILE" ]] && sed 's/^/state: /' "$STATE_FILE" >&2 || true
+  [[ -f "$STATE_FILE" ]] && root_sed_print 's/^/state: /' "$STATE_FILE" >&2 || true
 }
 
 install_system_packages() {
@@ -159,7 +161,7 @@ sync_env_defaults() {
   while IFS= read -r line; do
     [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
     local key="${line%%=*}"
-    if ! grep -q "^${key}=" "$ENV_FILE"; then
+    if ! root_grep_q "^${key}=" "$ENV_FILE"; then
       printf '\n%s\n' "$line" | run_root tee -a "$ENV_FILE" >/dev/null
       added=$((added + 1))
     fi
@@ -172,7 +174,7 @@ sync_env_defaults() {
 set_env_key() {
   local key="$1"
   local value="$2"
-  if grep -q "^${key}=" "$ENV_FILE"; then
+  if root_grep_q "^${key}=" "$ENV_FILE"; then
     run_root sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
   else
     printf '\n%s=%s\n' "$key" "$value" | run_root tee -a "$ENV_FILE" >/dev/null
@@ -220,7 +222,7 @@ EOF
 
 start_service() {
   [[ "$NO_START" -eq 1 ]] && { warn "service not started"; return 0; }
-  if ! grep -q '^TELEGRAM_BOT_TOKEN=.' "$ENV_FILE"; then
+  if ! root_grep_q '^TELEGRAM_BOT_TOKEN=.' "$ENV_FILE"; then
     warn "bot token is empty in $ENV_FILE; service start skipped"
     return 0
   fi
