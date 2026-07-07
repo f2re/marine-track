@@ -22,8 +22,13 @@ from marine_track.telegram_scene_browser import (
     write_temp_aoi,
 )
 from marine_track.telegram_ui import main_menu_markup
+from marine_track.telegram_user_state import save_last_bbox
 
 DETECT_CALLBACK_PREFIX = "mtdetect"
+
+
+def effective_user_id(update: Update) -> int:
+    return int(getattr(update.effective_user, "id", 0) or 0)
 
 
 async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
@@ -115,6 +120,16 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         hours = parse_scene_hours(args[5] if len(args) > 5 else None, DEFAULT_HOURS)
         aoi_geojson = bbox_geojson(west, south, east, north)
         aoi_path = write_temp_aoi(aoi_geojson)
+        save_last_bbox(
+            config.output_dir,
+            effective_user_id(update),
+            sensor,
+            west,
+            south,
+            east,
+            north,
+            hours,
+        )
     except ValueError as exc:
         await message.reply_text(f"Ошибка: {exc}", reply_markup=main_menu_markup())
         return
@@ -209,14 +224,14 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
             "Детекция не запущена: нет full-resolution GeoTIFF/COG asset.\n"
             f"Причина: {exc}\n\n"
             "Для ASF ZIP/GRD и preview-only сцен это ожидаемо. Используйте /detectbbox или кнопку 🔎 Найти суда.",
-            reply_markup=main_menu_markup(),
+            reply_markup=main_menu_markup(has_last_bbox=True),
         )
         return
     except Exception as exc:
-        await status.edit_text(f"Ошибка детекции: {exc}", reply_markup=main_menu_markup())
+        await status.edit_text(f"Ошибка детекции: {exc}", reply_markup=main_menu_markup(has_last_bbox=True))
         return
 
-    await status.edit_text(summary_text(result), reply_markup=main_menu_markup())
+    await status.edit_text(summary_text(result), reply_markup=main_menu_markup(has_last_bbox=True))
     await send_detection_outputs(target, result)
 
 
