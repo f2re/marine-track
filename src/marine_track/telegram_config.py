@@ -52,9 +52,9 @@ def env_optional_path(name: str) -> Path | None:
 
 
 def load_telegram_config() -> TelegramBotConfig:
-    token = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "").strip()
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is empty. Set it in .env or pass TELEGRAM_BOT_TOKEN before startup.")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is empty. Set it in .env before startup.")
 
     sensor_raw = os.getenv("MARINE_TRACK_DEFAULT_SENSOR", Sensor.AUTO.value).strip().lower()
     try:
