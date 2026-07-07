@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from telegram import Update
+from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from marine_track.detection_pipeline import DetectionRunResult, run_detection_for_token
@@ -36,6 +36,20 @@ def menu_for_user(update: Update, config: TelegramBotConfig):
     return main_menu_markup(has_last_bbox=count > 0, bbox_count=count)
 
 
+def progress_text(stage: str, detail: str | None = None) -> str:
+    text = f"⏳ {stage}"
+    if detail:
+        text += f"\n{detail}"
+    return text
+
+
+def make_progress_callback(loop: asyncio.AbstractEventLoop, status: Message):
+    def callback(stage: str) -> None:
+        asyncio.run_coroutine_threadsafe(status.edit_text(progress_text(stage)), loop)
+
+    return callback
+
+
 async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
     message = update.effective_message
     if not message:
@@ -66,8 +80,10 @@ async def detect_default_aoi(update: Update, context: ContextTypes.DEFAULT_TYPE,
     start, end = utc_window(hours)
     search_dir = run_dir(config.output_dir, "detect_default")
     status = await target.reply_text(
-        "⏳ Ищу свежую сцену для детекции по default AOI\n"
-        f"sensor={sensor.value}, период={hours} ч"
+        progress_text(
+            "1/5 search · свежая сцена по default AOI",
+            f"sensor={sensor.value}, период={hours} ч",
+        )
     )
     try:
         result = await asyncio.to_thread(
@@ -97,12 +113,10 @@ async def detect_default_aoi(update: Update, context: ContextTypes.DEFAULT_TYPE,
     scene = result.scenes[0]
     cache_status = "hit" if result.cache_hit else "refresh"
     await status.edit_text(
-        "✅ Сцена выбрана, запускаю детекцию\n"
-        f"provider: {result.provider}\n"
-        f"sensor: {result.sensor.value}\n"
-        f"search_cache: {cache_status}\n"
-        f"time: {scene.acquisition_time.isoformat()}\n"
-        f"product: {scene.product_id[:100]}"
+        progress_text(
+            "1/5 search · сцена выбрана",
+            f"provider={result.provider}\nsensor={result.sensor.value}\nsearch_cache={cache_status}\ntime={scene.acquisition_time.isoformat()}",
+        )
     )
     await send_detection_by_token(update, tokens[0], config)
 
@@ -142,8 +156,10 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     start, end = utc_window(hours)
     search_dir = run_dir(config.output_dir, "detectbbox")
     status = await message.reply_text(
-        "⏳ Ищу обрабатываемые GeoTIFF/COG сцены\n"
-        f"sensor={sensor.value}, bbox={west},{south},{east},{north}, период={hours} ч"
+        progress_text(
+            "1/5 search · detection-capable GeoTIFF/COG",
+            f"sensor={sensor.value}, bbox={west},{south},{east},{north}, период={hours} ч",
+        )
     )
     try:
         result = await asyncio.to_thread(
@@ -177,14 +193,10 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     first_scene = result.scenes[0]
     search_cache_status = "hit" if result.cache_hit else "refresh"
     await status.edit_text(
-        "✅ Найдена сцена для детекции\n"
-        f"token: {token}\n"
-        f"provider: {result.provider}\n"
-        f"sensor: {result.sensor.value}\n"
-        f"search_cache: {search_cache_status}\n"
-        f"time: {first_scene.acquisition_time.isoformat()}\n"
-        f"product: {first_scene.product_id[:120]}\n\n"
-        "Запускаю обработку."
+        progress_text(
+            "1/5 search · сцена выбрана",
+            f"provider={result.provider}\nsensor={result.sensor.value}\nsearch_cache={search_cache_status}\ntime={first_scene.acquisition_time.isoformat()}",
+        )
     )
     await send_detection_by_token(update, token, config)
 
@@ -209,7 +221,8 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
     if not target:
         return
 
-    status = await target.reply_text(f"⏳ Детекция по scene token: {token}")
+    status = await target.reply_text(progress_text("1/5 prepare · scene token", f"token={token}"))
+    loop = asyncio.get_running_loop()
     try:
         result = await asyncio.to_thread(
             run_detection_for_token,
@@ -223,6 +236,7 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
             guard_window_px=5,
             land_mask_geojson=config.land_mask_geojson,
             shoreline_buffer_m=config.shoreline_buffer_m,
+            progress_callback=make_progress_callback(loop, status),
         )
     except MaterializationError as exc:
         await status.edit_text(
@@ -236,8 +250,9 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
         await status.edit_text(f"Ошибка детекции: {exc}", reply_markup=menu_for_user(update, config))
         return
 
-    await status.edit_text(summary_text(result), reply_markup=menu_for_user(update, config))
+    await status.edit_text(progress_text("5/5 send · отправка результатов", f"detections={len(result.detections)}"))
     await send_detection_outputs(target, result)
+    await status.edit_text(summary_text(result), reply_markup=menu_for_user(update, config))
 
 
 def summary_text(result: DetectionRunResult) -> str:
