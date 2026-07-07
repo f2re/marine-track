@@ -22,8 +22,9 @@ bash deploy_telegram_bot.sh --providers all
 ## Что уже реализовано
 
 - Telegram bot `marine-track-bot`.
-- Главное inline-меню: `Найти суда`, `Сроки снимков`, `Статус`, `Помощь`, `Мой ID`.
+- Главное inline-меню: `Найти суда`, `Сроки снимков`, `Повторить район`, `Сроки района`, `Статус`, `Помощь`, `Мой ID`.
 - Быстрый сценарий без ручного token: default AOI → свежая detection-capable сцена → детекция → файлы.
+- Последний bbox пользователя: `/bboxdates` и `/detectbbox` сохраняют район для повторного запуска кнопками.
 - Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
 - Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
@@ -205,12 +206,27 @@ marine-track update-land-mask \
 /start → 🔎 Найти суда → обзор/crops/files
 ```
 
+Ручной район сохраняется автоматически:
+
+```text
+/detectbbox sentinel1 36.5 43.8 38.5 45.0 12
+```
+
+После этого в меню появятся:
+
+```text
+↻ Повторить район
+🕒 Сроки района
+```
+
 Кнопки меню:
 
 ```text
 🔎 Найти суда       свежая detection-capable сцена по default AOI и детекция
 🕒 Сроки снимков    список сцен; дальше 📷 preview или 🔎 детекция
-⚙️ Статус           AOI, sensor, lookback, land mask, output dir
+↻ Повторить район   повторная детекция по последнему bbox
+🕒 Сроки района      список сцен по последнему bbox
+⚙️ Статус           AOI, sensor, lookback, land mask, output dir, last bbox
 ❓ Помощь            краткая инструкция и примеры
 🆔 Мой ID            Telegram id для TELEGRAM_ADMIN_IDS
 ```
@@ -247,4 +263,4 @@ MARINE_TRACK_OUTPUT_DIR/detections/<token>/report.json
 
 См. `docs/IMPLEMENTATION_PLAN.md` и `docs/UX_REVIEW.md`.
 
-Ближайший следующий этап: AIS track rendering и сохраненные пользовательские AOI/bbox.
+Ближайший следующий этап: AIS track rendering и несколько сохраненных пользовательских AOI/bbox.
