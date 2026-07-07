@@ -28,6 +28,8 @@ CORE_MODULES = (
     "marine_track.pipeline",
     "marine_track.telegram_bot",
     "marine_track.telegram_detection",
+    "marine_track.telegram_ui",
+    "marine_track.telegram_user_state",
     "marine_track.detection_pipeline",
     "marine_track.detection_scene_search",
     "marine_track.scene_materializer",
