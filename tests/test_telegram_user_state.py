@@ -1,5 +1,3 @@
-import json
-
 from marine_track.models import Sensor
 from marine_track.telegram_user_state import (
     MAX_SAVED_BBOXES_PER_USER,
@@ -44,7 +42,7 @@ def test_state_file_corruption_returns_empty_state(tmp_path):
     assert get_saved_bboxes(tmp_path, 123) == []
 
 
-def test_saved_bboxes_store_multiple_and_sync_last_bbox(tmp_path):
+def test_saved_bboxes_store_multiple_and_latest_is_first(tmp_path):
     first = save_last_bbox(tmp_path, 123, Sensor.SENTINEL1, 36.5, 43.8, 38.5, 45.0, 12)
     second = save_last_bbox(tmp_path, 123, Sensor.SENTINEL2, 30.0, 40.0, 31.0, 41.0, 24)
 
@@ -86,7 +84,7 @@ def test_saved_bboxes_are_limited_per_user(tmp_path):
     assert saved[0].west == float(MAX_SAVED_BBOXES_PER_USER + 2)
 
 
-def test_delete_saved_bbox_updates_last_bbox(tmp_path):
+def test_delete_saved_bbox_updates_latest_bbox(tmp_path):
     first = save_last_bbox(tmp_path, 123, Sensor.SENTINEL1, 36.5, 43.8, 38.5, 45.0, 12)
     second = save_last_bbox(tmp_path, 123, Sensor.SENTINEL2, 30.0, 40.0, 31.0, 41.0, 24)
 
@@ -98,30 +96,3 @@ def test_delete_saved_bbox_updates_last_bbox(tmp_path):
     assert [item.id for item in saved] == [first.id]
     assert last is not None
     assert last.sensor == Sensor.SENTINEL1
-
-
-def test_saved_bboxes_read_legacy_last_bbox(tmp_path):
-    state = {
-        "users": {
-            "123": {
-                "last_bbox": {
-                    "sensor": "sentinel1",
-                    "west": 36.5,
-                    "south": 43.8,
-                    "east": 38.5,
-                    "north": 45.0,
-                    "hours": 12,
-                    "updated_at": "2026-01-01T00:00:00+00:00",
-                }
-            }
-        }
-    }
-    (tmp_path / "telegram_user_state.json").write_text(json.dumps(state), encoding="utf-8")
-
-    saved = get_saved_bboxes(tmp_path, 123)
-    last = get_last_bbox(tmp_path, 123)
-
-    assert len(saved) == 1
-    assert saved[0].sensor == Sensor.SENTINEL1
-    assert last is not None
-    assert bbox_label(last) == saved[0].label
