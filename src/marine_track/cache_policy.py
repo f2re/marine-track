@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -130,10 +131,8 @@ def raster_cache_path(
 
 
 def touch_cache_file(path: Path) -> None:
-    try:
+    with suppress(Exception):
         path.touch(exist_ok=True)
-    except Exception:
-        pass
 
 
 def cleanup_path(path: Path, max_age_seconds: int) -> CleanupReport:
@@ -176,10 +175,8 @@ def cleanup_runtime(output_dir: Path | None = None, cache_dir: Path | None = Non
 
 
 def remove_empty_dir(path: Path) -> None:
-    try:
+    with suppress(OSError):
         path.rmdir()
-    except OSError:
-        pass
 
 
 def short_hash(data: bytes, length: int = 16) -> str:

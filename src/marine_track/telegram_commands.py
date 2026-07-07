@@ -8,6 +8,7 @@ BOT_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand("help", "Помощь и примеры"),
     BotCommand("status", "Статус конфигурации"),
     BotCommand("whoami", "Показать Telegram user id"),
+    BotCommand("areas", "Сохраненные bbox районы"),
     BotCommand("dates", "Сроки снимков по AOI"),
     BotCommand("bboxdates", "Сроки снимков по bbox"),
     BotCommand("image", "Preview снимка по token"),

@@ -8,7 +8,8 @@ from rich.table import Table
 
 from marine_track.cache_policy import cleanup_runtime
 from marine_track.config import load_config
-from marine_track.land_mask_update import DEFAULT_LAND_MASK_SOURCE_URL, update_land_mask as build_land_mask
+from marine_track.land_mask_update import DEFAULT_LAND_MASK_SOURCE_URL
+from marine_track.land_mask_update import update_land_mask as build_land_mask
 from marine_track.models import Sensor
 from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.pipeline import parse_utc_datetime, run_search_stage, search_scenes_with_fallback

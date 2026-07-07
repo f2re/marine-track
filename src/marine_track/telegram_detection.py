@@ -22,7 +22,7 @@ from marine_track.telegram_scene_browser import (
     write_temp_aoi,
 )
 from marine_track.telegram_ui import main_menu_markup
-from marine_track.telegram_user_state import get_last_bbox, save_last_bbox
+from marine_track.telegram_user_state import get_saved_bboxes, save_last_bbox
 
 DETECT_CALLBACK_PREFIX = "mtdetect"
 
@@ -32,7 +32,8 @@ def effective_user_id(update: Update) -> int:
 
 
 def menu_for_user(update: Update, config: TelegramBotConfig):
-    return main_menu_markup(has_last_bbox=get_last_bbox(config.output_dir, effective_user_id(update)) is not None)
+    count = len(get_saved_bboxes(config.output_dir, effective_user_id(update)))
+    return main_menu_markup(has_last_bbox=count > 0, bbox_count=count)
 
 
 async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:

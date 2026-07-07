@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import html
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,10 +19,14 @@ from telegram.ext import ContextTypes
 from marine_track.models import Scene, Sensor
 from marine_track.pipeline import run_search_stage
 from marine_track.telegram_config import TelegramBotConfig
+from marine_track.telegram_ui import ACTION_MENU, MENU_CALLBACK_PREFIX
+from marine_track.telegram_user_state import save_last_bbox
 
 DEFAULT_HOURS = 12
 CALLBACK_PREFIX = "mtimg"
 DETECT_CALLBACK_PREFIX = "mtdetect"
+PAGE_CALLBACK_PREFIX = "mtpg"
+SCENE_PAGE_SIZE = 6
 REGISTRY_FILE = "scene_registry.json"
 PREVIEW_KEYS = (
     "thumbnail",
@@ -49,6 +54,19 @@ class SceneRegistryRecord:
     asset_manifest: str | None
     created_at: str
     aoi_geojson: dict[str, object] | None = None
+    search_hours: int | None = None
+
+
+@dataclass(frozen=True)
+class ScenePage:
+    provider: str
+    sensor: Sensor
+    tokens: list[str]
+    scenes: list[Scene]
+    page: int
+    page_count: int
+    hours: int | None = None
+    cache_hit: bool | None = None
 
 
 def parse_scene_hours(value: str | None, default: int = DEFAULT_HOURS) -> int:
@@ -78,6 +96,10 @@ def parse_scene_sensor(value: str | None, default: Sensor) -> Sensor:
 def utc_window(hours: int) -> tuple[datetime, datetime]:
     end = datetime.now(timezone.utc)
     return end - timedelta(hours=hours), end
+
+
+def effective_user_id(update: Update) -> int:
+    return int(getattr(update.effective_user, "id", 0) or 0)
 
 
 def scene_token(scene: Scene) -> str:
@@ -113,6 +135,7 @@ def register_scenes(
     scenes_json: Path,
     asset_manifest: Path | None,
     aoi_geojson: dict[str, object] | None = None,
+    search_hours: int | None = None,
 ) -> list[str]:
     registry = load_registry(output_dir)
     tokens: list[str] = []
@@ -128,6 +151,7 @@ def register_scenes(
             asset_manifest=str(asset_manifest) if asset_manifest else None,
             created_at=created_at,
             aoi_geojson=aoi_geojson,
+            search_hours=search_hours,
         )
         registry[token] = record.__dict__
         tokens.append(token)
@@ -193,9 +217,43 @@ def load_scenes(path: Path) -> list[Scene]:
     return [Scene.model_validate(item) for item in payload]
 
 
-def scene_keyboard(tokens: list[str], scenes: list[Scene], max_buttons: int = 12) -> InlineKeyboardMarkup:
+def page_count(total: int, page_size: int = SCENE_PAGE_SIZE) -> int:
+    if page_size <= 0:
+        raise ValueError("page_size must be positive")
+    return max(1, math.ceil(total / page_size))
+
+
+def clamp_page(page: int, total: int, page_size: int = SCENE_PAGE_SIZE) -> int:
+    return min(max(page, 0), page_count(total, page_size) - 1)
+
+
+def scene_page_slice(
+    tokens: list[str],
+    scenes: list[Scene],
+    page: int = 0,
+    page_size: int = SCENE_PAGE_SIZE,
+) -> tuple[list[str], list[Scene], int, int]:
+    if len(tokens) != len(scenes):
+        raise ValueError("tokens and scenes length mismatch")
+    current_page = clamp_page(page, len(scenes), page_size)
+    start = current_page * page_size
+    end = start + page_size
+    return tokens[start:end], scenes[start:end], current_page, page_count(len(scenes), page_size)
+
+
+def scene_page_callback_data(token: str, page: int) -> str:
+    return f"{PAGE_CALLBACK_PREFIX}:{token}:{page}"
+
+
+def scene_keyboard(
+    tokens: list[str],
+    scenes: list[Scene],
+    page: int = 0,
+    page_size: int = SCENE_PAGE_SIZE,
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for token, scene in list(zip(tokens, scenes, strict=True))[:max_buttons]:
+    page_tokens, page_scenes, current_page, total_pages = scene_page_slice(tokens, scenes, page, page_size)
+    for token, scene in zip(page_tokens, page_scenes, strict=True):
         time_label = scene.acquisition_time.strftime("%m-%d %H:%MZ")
         sensor_label = scene.sensor.value.replace("sentinel", "S")
         rows.append(
@@ -207,6 +265,24 @@ def scene_keyboard(tokens: list[str], scenes: list[Scene], max_buttons: int = 12
                 InlineKeyboardButton("🔎 Детекция", callback_data=f"{DETECT_CALLBACK_PREFIX}:{token}"),
             ]
         )
+    if total_pages > 1 and tokens:
+        nav_row: list[InlineKeyboardButton] = []
+        if current_page > 0:
+            nav_row.append(
+                InlineKeyboardButton("◀️ Назад", callback_data=scene_page_callback_data(tokens[0], current_page - 1))
+            )
+        nav_row.append(
+            InlineKeyboardButton(
+                f"стр. {current_page + 1}/{total_pages}",
+                callback_data=scene_page_callback_data(tokens[0], current_page),
+            )
+        )
+        if current_page < total_pages - 1:
+            nav_row.append(
+                InlineKeyboardButton("▶️ Далее", callback_data=scene_page_callback_data(tokens[0], current_page + 1))
+            )
+        rows.append(nav_row)
+    rows.append([InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -214,11 +290,22 @@ def format_scenes_message(
     provider: str,
     sensor: Sensor,
     scenes: list[Scene],
-    hours: int,
+    hours: int | None,
     cache_hit: bool | None = None,
+    page: int = 0,
+    page_size: int = SCENE_PAGE_SIZE,
 ) -> str:
+    current_page = clamp_page(page, len(scenes), page_size)
+    total_pages = page_count(len(scenes), page_size)
+    start = current_page * page_size
+    page_scenes = scenes[start : start + page_size]
+    title = (
+        f"Снимки за последние {hours} ч · стр. {current_page + 1}/{total_pages}"
+        if hours is not None
+        else f"Снимки из сохраненного поиска · стр. {current_page + 1}/{total_pages}"
+    )
     lines = [
-        f"<b>Доступные снимки за последние {hours} ч</b>",
+        f"<b>{title}</b>",
         f"provider: <code>{html.escape(provider)}</code>",
         f"sensor: <code>{sensor.value}</code>",
         f"count: <code>{len(scenes)}</code>",
@@ -227,17 +314,60 @@ def format_scenes_message(
         cache_status = "hit" if cache_hit else "refresh"
         lines.append(f"search_cache: <code>{cache_status}</code>")
     lines.append("")
-    for index, scene in enumerate(scenes[:12], start=1):
-        time_text = html.escape(scene.acquisition_time.isoformat())
-        product = html.escape(scene.product_id[:80])
-        lines.append(f"{index}. <code>{time_text}</code>")
-        lines.append(f"   <code>{product}</code>")
-        lines.append(f"   beam={html.escape(scene.beam_mode or '-')} pol/cloud={html.escape(scene.polarization_label())}")
-    if len(scenes) > 12:
-        lines.append(f"... ещё {len(scenes) - 12}")
+    for offset, scene in enumerate(page_scenes, start=1):
+        index = start + offset
+        time_text = html.escape(scene.acquisition_time.strftime("%Y-%m-%d %H:%MZ"))
+        product = html.escape(scene.product_id[:72])
+        lines.append(f"{index}. <code>{time_text}</code> · {html.escape(scene.sensor.value)} · {html.escape(scene.provider)}")
+        lines.append(
+            "   "
+            f"beam={html.escape(scene.beam_mode or '-')} · "
+            f"pol/cloud={html.escape(scene.polarization_label())} · "
+            f"product=<code>{product}</code>"
+        )
     lines.append("")
     lines.append("Нажмите 📷 для preview или 🔎 для запуска детекции по сроку.")
     return "\n".join(lines)
+
+
+def restore_scene_page(
+    output_dir: Path,
+    token: str,
+    page: int,
+    page_size: int = SCENE_PAGE_SIZE,
+) -> ScenePage:
+    registry = load_registry(output_dir)
+    record = registry.get(token)
+    if not isinstance(record, dict):
+        raise FileNotFoundError("token not found in scene registry")
+    scenes_json = record.get("scenes_json")
+    if not isinstance(scenes_json, str):
+        raise FileNotFoundError("scenes_json not found in scene registry")
+    scenes_path = Path(scenes_json)
+    if not scenes_path.is_file():
+        raise FileNotFoundError(scenes_json)
+    scenes = load_scenes(scenes_path)
+    tokens = [scene_token(scene) for scene in scenes]
+    sensor_value = str(record.get("sensor") or (scenes[0].sensor.value if scenes else Sensor.AUTO.value))
+    provider = str(record.get("provider") or (scenes[0].provider if scenes else "-"))
+    hours_raw = record.get("search_hours")
+    try:
+        hours = int(hours_raw) if hours_raw is not None else None
+    except (TypeError, ValueError):
+        hours = None
+    try:
+        sensor = Sensor(sensor_value)
+    except ValueError:
+        sensor = scenes[0].sensor if scenes else Sensor.AUTO
+    return ScenePage(
+        provider=provider,
+        sensor=sensor,
+        tokens=tokens,
+        scenes=scenes,
+        page=clamp_page(page, len(scenes), page_size),
+        page_count=page_count(len(scenes), page_size),
+        hours=hours,
+    )
 
 
 def select_preview_asset(scene: Scene) -> tuple[str, str] | None:
@@ -332,6 +462,7 @@ async def list_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         result.scenes_json,
         result.asset_manifest,
         aoi_geojson=aoi_geojson,
+        search_hours=hours,
     )
     if not scenes:
         await status.edit_text(f"За последние {hours} ч снимков не найдено.")
@@ -360,6 +491,7 @@ async def bbox_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         hours = parse_scene_hours(args[5] if len(args) > 5 else None, DEFAULT_HOURS)
         aoi_geojson = bbox_geojson(west, south, east, north)
         aoi_path = write_temp_aoi(aoi_geojson)
+        save_last_bbox(config.output_dir, effective_user_id(update), sensor, west, south, east, north, hours)
     except ValueError as exc:
         await message.reply_text(f"Ошибка: {exc}")
         return
@@ -395,6 +527,7 @@ async def bbox_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         result.scenes_json,
         result.asset_manifest,
         aoi_geojson=aoi_geojson,
+        search_hours=hours,
     )
     if not scenes:
         await status.edit_text(f"За последние {hours} ч снимков не найдено.")
@@ -470,3 +603,42 @@ async def image_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, con
     if prefix != CALLBACK_PREFIX or not token:
         return
     await send_scene_preview_by_token(update, token, config)
+
+
+async def scene_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    parts = query.data.split(":")
+    if len(parts) != 3 or parts[0] != PAGE_CALLBACK_PREFIX:
+        return
+    token = parts[1]
+    try:
+        page = int(parts[2])
+    except ValueError:
+        page = 0
+    try:
+        scene_page = restore_scene_page(config.output_dir, token, page)
+    except Exception:
+        if query.message:
+            await query.message.reply_text(
+                "Список сцен устарел, выполните /dates или /bboxdates заново.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")]]
+                ),
+            )
+        return
+    if not query.message:
+        return
+    await query.message.edit_text(
+        format_scenes_message(
+            scene_page.provider,
+            scene_page.sensor,
+            scene_page.scenes,
+            scene_page.hours,
+            page=scene_page.page,
+        ),
+        parse_mode=ParseMode.HTML,
+        reply_markup=scene_keyboard(scene_page.tokens, scene_page.scenes, page=scene_page.page),
+    )

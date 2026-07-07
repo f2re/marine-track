@@ -70,6 +70,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/marine_track/cache_policy.py" = ["F401"]
+"src/marine_track/cli.py" = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

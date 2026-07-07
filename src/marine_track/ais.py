@@ -56,10 +56,7 @@ def interpolate_track_position(group: pd.DataFrame, target_time: datetime) -> AI
     b = before.iloc[0]
     a = after.iloc[0]
     total_s = (a["time"] - b["time"]).total_seconds()
-    if total_s == 0:
-        ratio = 0.0
-    else:
-        ratio = (target - b["time"]).total_seconds() / total_s
+    ratio = 0.0 if total_s == 0 else (target - b["time"]).total_seconds() / total_s
 
     lon = float(b["lon"] + ratio * (a["lon"] - b["lon"]))
     lat = float(b["lat"] + ratio * (a["lat"] - b["lat"]))

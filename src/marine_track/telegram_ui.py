@@ -6,31 +6,38 @@ from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from marine_track.telegram_config import TelegramBotConfig
+from marine_track.telegram_user_state import SavedBbox, bbox_label
 
 MENU_CALLBACK_PREFIX = "mtmenu"
+AREA_CALLBACK_PREFIX = "mtarea"
 ACTION_DATES_DEFAULT = "dates_default"
 ACTION_DETECT_DEFAULT = "detect_default"
 ACTION_DETECT_LAST_BBOX = "detect_last_bbox"
 ACTION_DATES_LAST_BBOX = "dates_last_bbox"
+ACTION_AREAS = "areas"
+ACTION_MENU = "menu"
 ACTION_STATUS = "status"
 ACTION_HELP = "help"
 ACTION_WHOAMI = "whoami"
 
 
-def main_menu_markup(has_last_bbox: bool = False) -> InlineKeyboardMarkup:
+def main_menu_markup(has_last_bbox: bool = False, bbox_count: int | None = None) -> InlineKeyboardMarkup:
+    saved_count = bbox_count if bbox_count is not None else int(has_last_bbox)
     rows = [
         [
             InlineKeyboardButton("🔎 Найти суда", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DETECT_DEFAULT}"),
             InlineKeyboardButton("🕒 Сроки снимков", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DATES_DEFAULT}"),
         ],
     ]
-    if has_last_bbox:
+    if saved_count == 1:
         rows.append(
             [
                 InlineKeyboardButton("↻ Повторить район", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DETECT_LAST_BBOX}"),
                 InlineKeyboardButton("🕒 Сроки района", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DATES_LAST_BBOX}"),
             ]
         )
+    elif saved_count > 1:
+        rows.append([InlineKeyboardButton("📍 Мои районы", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_AREAS}")])
     rows.extend(
         [
             [
@@ -45,7 +52,7 @@ def main_menu_markup(has_last_bbox: bool = False) -> InlineKeyboardMarkup:
 
 def back_to_menu_markup(has_last_bbox: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_HELP}")]]
+        [[InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")]]
     )
 
 
@@ -71,10 +78,12 @@ def help_text() -> str:
         "• <b>🔎 Найти суда</b> — поиск свежей сцены по default AOI и запуск детекции.\n"
         "• <b>↻ Повторить район</b> — повторить последний bbox из /detectbbox.\n"
         "• <b>🕒 Сроки района</b> — показать снимки для последнего bbox.\n\n"
+        "• <b>📍 Мои районы</b> — выбрать сохраненный bbox для сроков или детекции.\n\n"
         "<b>Команды для точного управления</b>\n"
         "<code>/dates sentinel1 12</code> — сроки по default AOI.\n"
         "<code>/bboxdates sentinel1 36.5 43.8 38.5 45.0 12</code> — сроки по bbox.\n"
         "<code>/detectbbox sentinel1 36.5 43.8 38.5 45.0 12</code> — сразу найти и обработать bbox.\n"
+        "<code>/areas</code> — список сохраненных районов.\n"
         "<code>/detect token</code> — повторить детекцию по сохраненному token.\n"
         "<code>/image token</code> — preview сцены.\n\n"
         "<b>Формат bbox</b>\n"
@@ -119,3 +128,32 @@ def compact_error(title: str, detail: object, next_step: str | None = None) -> s
     if next_step:
         text += f"\n\nЧто сделать: {next_step}"
     return text
+
+
+def areas_text(saved_bboxes: list[SavedBbox]) -> str:
+    if not saved_bboxes:
+        return (
+            "<b>Сохраненные районы</b>\n"
+            "Пока пусто.\n\n"
+            "Что сделать: выполните <code>/bboxdates</code> или <code>/detectbbox</code> с bbox."
+        )
+    lines = ["<b>Сохраненные районы</b>"]
+    for index, bbox in enumerate(saved_bboxes, start=1):
+        lines.append(f"{index}. <code>{html.escape(bbox_label(bbox))}</code> · запусков: <code>{bbox.use_count}</code>")
+    lines.append("")
+    lines.append("Выберите действие под нужным районом.")
+    return "\n".join(lines)
+
+
+def areas_markup(saved_bboxes: list[SavedBbox]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for index, bbox in enumerate(saved_bboxes, start=1):
+        rows.append(
+            [
+                InlineKeyboardButton(f"{index} 🔎 Детекция", callback_data=f"{AREA_CALLBACK_PREFIX}:d:{bbox.id}"),
+                InlineKeyboardButton(f"{index} 🕒 Сроки", callback_data=f"{AREA_CALLBACK_PREFIX}:t:{bbox.id}"),
+                InlineKeyboardButton(f"{index} 🗑", callback_data=f"{AREA_CALLBACK_PREFIX}:x:{bbox.id}"),
+            ]
+        )
+    rows.append([InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")])
+    return InlineKeyboardMarkup(rows)

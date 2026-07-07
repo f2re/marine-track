@@ -9,29 +9,52 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from marine_track.telegram_config import TelegramBotConfig, load_telegram_config
 from marine_track.telegram_detection import (
     DETECT_CALLBACK_PREFIX,
+)
+from marine_track.telegram_detection import (
     detect_bbox_command as scene_detect_bbox_command,
+)
+from marine_track.telegram_detection import (
     detect_callback as scene_detect_callback,
+)
+from marine_track.telegram_detection import (
     detect_command as scene_detect_command,
+)
+from marine_track.telegram_detection import (
     detect_default_aoi as scene_detect_default_aoi,
 )
 from marine_track.telegram_scene_browser import (
     CALLBACK_PREFIX,
+    PAGE_CALLBACK_PREFIX,
+)
+from marine_track.telegram_scene_browser import (
     bbox_dates_command as scene_bbox_dates_command,
+)
+from marine_track.telegram_scene_browser import (
     image_callback as scene_image_callback,
+)
+from marine_track.telegram_scene_browser import (
     image_command as scene_image_command,
+)
+from marine_track.telegram_scene_browser import (
     list_dates_command as scene_dates_command,
-    parse_scene_hours,
-    parse_scene_sensor,
+)
+from marine_track.telegram_scene_browser import (
+    scene_page_callback as scene_scene_page_callback,
 )
 from marine_track.telegram_ui import (
+    ACTION_AREAS,
     ACTION_DATES_DEFAULT,
     ACTION_DATES_LAST_BBOX,
     ACTION_DETECT_DEFAULT,
     ACTION_DETECT_LAST_BBOX,
     ACTION_HELP,
+    ACTION_MENU,
     ACTION_STATUS,
     ACTION_WHOAMI,
+    AREA_CALLBACK_PREFIX,
     MENU_CALLBACK_PREFIX,
+    areas_markup,
+    areas_text,
     help_text,
     main_menu_markup,
     start_text,
@@ -40,8 +63,10 @@ from marine_track.telegram_ui import (
 from marine_track.telegram_user_state import (
     bbox_command_args,
     bbox_label,
+    delete_saved_bbox,
     get_last_bbox,
-    save_last_bbox,
+    get_saved_bbox,
+    get_saved_bboxes,
 )
 
 CONFIG: TelegramBotConfig | None = None
@@ -71,8 +96,18 @@ def last_bbox_label(update: Update) -> str | None:
     return bbox_label(bbox) if bbox else None
 
 
+def saved_bbox_count(update: Update) -> int:
+    return len(get_saved_bboxes(get_config().output_dir, effective_user_id(update)))
+
+
 def user_menu_markup(update: Update):
-    return main_menu_markup(has_last_bbox=last_bbox_label(update) is not None)
+    count = saved_bbox_count(update)
+    return main_menu_markup(has_last_bbox=count > 0, bbox_count=count)
+
+
+def saved_bbox_menu(update: Update):
+    saved = get_saved_bboxes(get_config().output_dir, effective_user_id(update))
+    return areas_text(saved), areas_markup(saved)
 
 
 def is_authorized(update: Update) -> bool:
@@ -90,28 +125,6 @@ async def require_authorized(update: Update) -> bool:
             reply_markup=user_menu_markup(update),
         )
     return False
-
-
-def remember_bbox_args(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    args = list(context.args or [])
-    if len(args) < 5:
-        return
-    try:
-        sensor = parse_scene_sensor(args[0], get_config().default_sensor)
-        west, south, east, north = [float(value) for value in args[1:5]]
-        hours = parse_scene_hours(args[5] if len(args) > 5 else None)
-    except ValueError:
-        return
-    save_last_bbox(
-        get_config().output_dir,
-        effective_user_id(update),
-        sensor,
-        west,
-        south,
-        east,
-        north,
-        hours,
-    )
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -154,12 +167,27 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
+async def areas_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_authorized(update):
+        return
+    if update.effective_message:
+        text, markup = saved_bbox_menu(update)
+        await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not query or not query.data:
         return
     await query.answer()
     _, _, action = query.data.partition(":")
+    if action == ACTION_MENU:
+        await query.message.reply_text(
+            start_text(get_config(), last_bbox_label(update)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=user_menu_markup(update),
+        )
+        return
     if action == ACTION_HELP:
         await query.message.reply_text(help_text(), parse_mode=ParseMode.HTML, reply_markup=user_menu_markup(update))
         return
@@ -176,6 +204,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode=ParseMode.HTML,
             reply_markup=user_menu_markup(update),
         )
+        return
+    if action == ACTION_AREAS:
+        if not await require_authorized(update):
+            return
+        text, markup = saved_bbox_menu(update)
+        await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
     if not await require_authorized(update):
         return
@@ -204,6 +238,51 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
 
+async def area_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    parts = query.data.split(":")
+    if len(parts) != 3 or parts[0] != AREA_CALLBACK_PREFIX:
+        return
+    if not await require_authorized(update):
+        return
+
+    action, bbox_id = parts[1], parts[2]
+    bbox = get_saved_bbox(get_config().output_dir, effective_user_id(update), bbox_id)
+    if action == "x":
+        deleted = delete_saved_bbox(get_config().output_dir, effective_user_id(update), bbox_id)
+        if not deleted:
+            await query.message.reply_text(
+                "Район уже не найден. Что сделать: откройте /areas заново.",
+                reply_markup=user_menu_markup(update),
+            )
+            return
+        text, markup = saved_bbox_menu(update)
+        await query.message.reply_text("🗑 Район удален.", reply_markup=user_menu_markup(update))
+        await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return
+    if bbox is None:
+        await query.message.reply_text(
+            "Район не найден. Что сделать: откройте /areas или сохраните bbox через /bboxdates.",
+            reply_markup=user_menu_markup(update),
+        )
+        return
+
+    context.args = bbox_command_args(bbox)
+    async with get_semaphore():
+        if action == "t":
+            await scene_bbox_dates_command(update, context, get_config())
+        elif action == "d":
+            await scene_detect_bbox_command(update, context, get_config())
+        else:
+            await query.message.reply_text(
+                "Неизвестное действие. Что сделать: откройте /areas заново.",
+                reply_markup=user_menu_markup(update),
+            )
+
+
 async def dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await require_authorized(update):
         async with get_semaphore():
@@ -212,7 +291,6 @@ async def dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def bboxdates_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await require_authorized(update):
-        remember_bbox_args(update, context)
         async with get_semaphore():
             await scene_bbox_dates_command(update, context, get_config())
 
@@ -230,7 +308,6 @@ async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def detectbbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await require_authorized(update):
-        remember_bbox_args(update, context)
         async with get_semaphore():
             await scene_detect_bbox_command(update, context, get_config())
 
@@ -253,12 +330,16 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("whoami", whoami_command))
+    app.add_handler(CommandHandler("areas", areas_command))
+    app.add_handler(CommandHandler("bboxlist", areas_command))
     app.add_handler(CommandHandler("dates", dates_command))
     app.add_handler(CommandHandler("bboxdates", bboxdates_command))
     app.add_handler(CommandHandler("image", image_command))
     app.add_handler(CommandHandler("detect", detect_command))
     app.add_handler(CommandHandler("detectbbox", detectbbox_command))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=f"^{MENU_CALLBACK_PREFIX}:"))
+    app.add_handler(CallbackQueryHandler(area_callback, pattern=f"^{AREA_CALLBACK_PREFIX}:"))
+    app.add_handler(CallbackQueryHandler(scene_scene_page_callback, pattern=f"^{PAGE_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(image_callback, pattern=f"^{CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(detect_callback, pattern=f"^{DETECT_CALLBACK_PREFIX}:"))
     return app

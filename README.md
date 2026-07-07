@@ -22,11 +22,12 @@ bash deploy_telegram_bot.sh --providers all
 ## Что уже реализовано
 
 - Telegram bot `marine-track-bot`.
-- Главное inline-меню: `Найти суда`, `Сроки снимков`, `Повторить район`, `Сроки района`, `Статус`, `Помощь`, `Мой ID`.
+- Главное inline-меню: `Найти суда`, `Сроки снимков`, `Повторить район`, `Сроки района`, `Мои районы`, `Статус`, `Помощь`, `Мой ID`.
 - Быстрый сценарий без ручного token: default AOI → свежая detection-capable сцена → детекция → файлы.
-- Последний bbox пользователя: `/bboxdates` и `/detectbbox` сохраняют район для повторного запуска кнопками.
-- Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
+- Сохраненные bbox пользователя: `/bboxdates` и `/detectbbox` сохраняют до 10 районов для повторного запуска кнопками.
+- Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/areas`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
+- Пагинация списка сцен: кнопки `◀️ Назад` и `▶️ Далее` перелистывают локально сохраненный результат без нового provider API search.
 - Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
 - Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
 - Provider profiles: `all`, `scene`, `aux`, `core`, `none`.
@@ -212,24 +213,41 @@ marine-track update-land-mask \
 /detectbbox sentinel1 36.5 43.8 38.5 45.0 12
 ```
 
-После этого в меню появятся:
+После первого сохраненного bbox в меню появятся быстрые кнопки:
 
 ```text
 ↻ Повторить район
 🕒 Сроки района
 ```
 
+После второго и следующих bbox меню показывает:
+
+```text
+📍 Мои районы
+```
+
+В `📍 Мои районы` и `/areas` доступны действия по каждому сохраненному району:
+
+```text
+🔎 Детекция
+🕒 Сроки
+🗑 Удалить
+```
+
 Кнопки меню:
 
 ```text
 🔎 Найти суда       свежая detection-capable сцена по default AOI и детекция
-🕒 Сроки снимков    список сцен; дальше 📷 preview или 🔎 детекция
+🕒 Сроки снимков    постраничный список сцен; дальше 📷 preview или 🔎 детекция
 ↻ Повторить район   повторная детекция по последнему bbox
 🕒 Сроки района      список сцен по последнему bbox
+📍 Мои районы        сохраненные bbox: детекция, сроки или удаление
 ⚙️ Статус           AOI, sensor, lookback, land mask, output dir, last bbox
 ❓ Помощь            краткая инструкция и примеры
 🆔 Мой ID            Telegram id для TELEGRAM_ADMIN_IDS
 ```
+
+Если найдено больше одной страницы сцен, бот показывает `стр. 1/N` и кнопки навигации. Перелистывание использует `scene_registry.json` и сохраненный `scenes_json`; нового STAC/provider search при смене страницы нет. Если локальный список устарел или удален, бот попросит выполнить `/dates` или `/bboxdates` заново.
 
 Команды:
 
@@ -239,6 +257,7 @@ marine-track update-land-mask \
 /help
 /dates [auto|sentinel1|sentinel2] [hours]
 /bboxdates [auto|sentinel1|sentinel2] west south east north [hours]
+/areas
 /image token
 /detect token
 /detectbbox [auto|sentinel1|sentinel2] west south east north [hours]
@@ -263,4 +282,4 @@ MARINE_TRACK_OUTPUT_DIR/detections/<token>/report.json
 
 См. `docs/IMPLEMENTATION_PLAN.md` и `docs/UX_REVIEW.md`.
 
-Ближайший следующий этап: AIS track rendering и несколько сохраненных пользовательских AOI/bbox.
+Ближайший следующий этап: progress states для долгих операций, режим “только картинки / только файлы” и AIS track rendering.
