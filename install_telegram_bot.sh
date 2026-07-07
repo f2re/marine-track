@@ -24,11 +24,7 @@ log() { printf '▶ %s\n' "$*" >&2; }
 success() { printf '✓ %s\n' "$*" >&2; }
 warn() { printf '! %s\n' "$*" >&2; }
 fail() { printf '✗ %s\n' "$*" >&2; exit 1; }
-on_error() {
-  local rc=$?
-  printf '✗ command failed at line %s with exit %s: %s\n' "$1" "$rc" "$2" >&2
-  exit "$rc"
-}
+on_error() { local rc=$?; printf '✗ command failed at line %s with exit %s: %s\n' "$1" "$rc" "$2" >&2; exit "$rc"; }
 trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
@@ -43,8 +39,8 @@ Options:
   --service-name NAME
   --service-user USER
   --python PATH
-  --providers PROFILE      all, scene, aux, core, none. Default: all
-  --yes                    Non-interactive; deploy will fail if required values are absent
+  --providers all|scene|aux|core   Default: all
+  --yes                            Non-interactive; deploy will fail if required values are absent
   --skip-apt
   --no-start
   --status
@@ -85,8 +81,7 @@ confirm() {
 normalize_provider_profile() {
   case "$PROVIDER_PROFILE" in
     all|scene|aux|core) ;;
-    none) PROVIDER_PROFILE="core" ;;
-    *) fail "invalid provider profile: $PROVIDER_PROFILE" ;;
+    *) fail "invalid provider profile: $PROVIDER_PROFILE. Use all, scene, aux, core" ;;
   esac
 }
 
@@ -119,7 +114,7 @@ require_repo_files() {
 ensure_root_access() {
   [[ -z "$SUDO" ]] && return 0
   command -v sudo >/dev/null 2>&1 || fail "root access is required, but sudo is not installed"
-  sudo -v || fail "root access is required for install. Run from a real sudo-capable shell or as root."
+  sudo -v || fail "root access is required for install"
 }
 
 ensure_systemd_available() {
