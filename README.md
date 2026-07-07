@@ -17,7 +17,13 @@ bash install_telegram_bot.sh --providers all
 bash deploy_telegram_bot.sh --providers all
 ```
 
-Все прежние wrapper/fix/helper scripts удалены из рабочего пути. Их логика встроена в `deploy_telegram_bot.sh`: запрос Telegram/provider-доступов, установка provider extras, Telegram `getMe` healthcheck, provider preflight, одноразовая подготовка land mask, cleanup, регистрация Telegram-команд и рестарт systemd.
+Все прежние wrapper/fix/helper scripts удалены из рабочего пути. Их логика встроена в `deploy_telegram_bot.sh`: установка provider extras, Telegram `getMe` healthcheck, provider preflight, одноразовая подготовка land mask, cleanup, регистрация Telegram-команд и рестарт systemd.
+
+## Release gate
+
+Перед расширением алгоритмов и новых источников проект должен пройти `docs/RELEASE_GATE.md`: bash syntax, pytest, ruff, clean install, deploy, systemd, Telegram `/start`, `/dates`, `/detectbbox`, land-mask/cache checks.
+
+Пока release gate v0.1 не закрыт на сервере, не добавлять новые providers, Sentinel-2 full stack, AIS rendering и ASF ZIP/GRD processing.
 
 ## Что уже реализовано
 
@@ -28,6 +34,7 @@ bash deploy_telegram_bot.sh --providers all
 - Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/areas`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
 - Пагинация списка сцен: кнопки `◀️ Назад` и `▶️ Далее` перелистывают локально сохраненный результат без нового provider API search.
+- Progress states в Telegram для долгой детекции: search → materialize → detect → render → send.
 - Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
 - Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
 - Provider profiles: `all`, `scene`, `aux`, `core`.
@@ -42,6 +49,8 @@ bash deploy_telegram_bot.sh --providers all
 
 ## Что пока не реализовано
 
+- Режим выдачи результата: только картинки / только файлы / всё.
+- Lock-файлы для конкурентного скачивания одного raster asset.
 - Полноценный Sentinel-2 band stack B02/B03/B04/B08 + SCL/cloud/water mask.
 - Speed enrichment из wake geometry.
 - AIS track rendering на crop.
@@ -55,11 +64,13 @@ cd marine-track
 TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_telegram_bot.sh --providers all --yes
 ```
 
-Интерактивно, с запросом Telegram token и provider-доступов:
+Интерактивно, с запросом Telegram token:
 
 ```bash
 bash install_telegram_bot.sh --providers all
 ```
+
+Provider-доступы задаются через `/opt/marine_track/.env` или environment; deploy проверяет их через provider preflight без сетевых запросов.
 
 Профили provider-зависимостей:
 
@@ -92,7 +103,7 @@ git pull
 bash deploy_telegram_bot.sh --providers all --yes
 ```
 
-Интерактивный деплой с запросом новых/пустых доступов:
+Интерактивный деплой с запросом Telegram token, если он пустой:
 
 ```bash
 git pull
@@ -116,15 +127,14 @@ bash deploy_telegram_bot.sh --providers core --yes
 1. Копирует текущий checkout в `/opt/marine_track`, не перетирая `.env`, `.venv`, `runs` и сгенерированный land mask.
 2. Синхронизирует новые ключи из `.env.example` в `/opt/marine_track/.env`.
 3. Запрашивает или принимает через environment `TELEGRAM_BOT_TOKEN` и `TELEGRAM_ADMIN_IDS`.
-4. Запрашивает provider-доступы для активного профиля.
-5. Ставит пакет с нужными extras: `.[providers]`, `.[scene-providers]`, `.[aux-providers]` или core.
-6. Один раз собирает land mask, если `MARINE_TRACK_AUTO_UPDATE_LAND_MASK=1`, mask-файл отсутствует и `MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0`.
-7. Выполняет cleanup старых кешей/output-файлов по retention.
-8. Запускает `runtime_check.py`.
+4. Ставит пакет с нужными extras: `.[providers]`, `.[scene-providers]`, `.[aux-providers]` или core.
+5. Один раз собирает land mask, если `MARINE_TRACK_AUTO_UPDATE_LAND_MASK=1`, mask-файл отсутствует и `MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0`.
+6. Выполняет cleanup старых кешей/output-файлов по retention.
+7. Запускает `runtime_check.py`.
+8. Выполняет provider preflight без сетевых запросов.
 9. Проверяет Telegram token через `getMe`.
-10. Выполняет provider preflight без сетевых запросов.
-11. Регистрирует Telegram-команды.
-12. Перезапускает `marine-track-bot.service`.
+10. Регистрирует Telegram-команды.
+11. Перезапускает `marine-track-bot.service`.
 
 Если `TELEGRAM_BOT_TOKEN` пустой или неверный, deploy падает до рестарта сервиса.
 
