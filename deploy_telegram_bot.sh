@@ -155,6 +155,12 @@ if op == "get":
             if raw and not raw.lstrip().startswith("#") and "=" in raw and raw.split("=", 1)[0].strip() == key:
                 print(raw.split("=", 1)[1].strip().strip('"').strip("'"))
                 break
+elif op == "exists":
+    if path.is_file():
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            if raw and not raw.lstrip().startswith("#") and "=" in raw and raw.split("=", 1)[0].strip() == key:
+                raise SystemExit(0)
+    raise SystemExit(1)
 elif op == "set":
     value = sys.argv[4]
     lines = []; seen = False
@@ -174,6 +180,7 @@ PY
 
 env_get() { env_tool get "$1"; }
 env_set() { env_tool set "$1" "$2"; }
+env_key_exists() { env_tool exists "$1"; }
 env_has_value() { [[ -n "$(env_get "$1")" ]]; }
 
 sync_env_defaults() {
@@ -182,7 +189,7 @@ sync_env_defaults() {
   while IFS= read -r line; do
     [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
     local key="${line%%=*}"
-    [[ -z "$(env_get "$key")" ]] && printf '\n%s\n' "$line" | run_root tee -a "$ENV_FILE" >/dev/null
+    env_key_exists "$key" || printf '\n%s\n' "$line" | run_root tee -a "$ENV_FILE" >/dev/null
   done < "$template"
   env_set MARINE_TRACK_PROVIDER_PROFILE "$PROVIDER_PROFILE"
   run_root chown root:"$SERVICE_USER" "$ENV_FILE"
@@ -242,6 +249,7 @@ prepare_land_mask_once() {
 }
 
 runtime_check() { run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" MARINE_TRACK_PROVIDER_PROFILE="$PROVIDER_PROFILE" "$VENV_DIR/bin/python" "$INSTALL_DIR/runtime_check.py"; }
+provider_preflight() { run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" MARINE_TRACK_PROVIDER_PROFILE="$PROVIDER_PROFILE" "$VENV_DIR/bin/python" -m marine_track.provider_preflight --env-file "$ENV_FILE"; }
 
 telegram_getme_check() {
   run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" - "$ENV_FILE" <<'PY'
@@ -310,6 +318,7 @@ service_name=$SERVICE_NAME
 service_user=$SERVICE_USER
 provider_profile=$PROVIDER_PROFILE
 runtime_check=ok
+provider_preflight=ok
 telegram_getme=ok
 telegram_commands=registered
 EOF
@@ -337,6 +346,7 @@ main() {
   prepare_land_mask_once
   cleanup_runtime_files
   runtime_check
+  provider_preflight
   telegram_getme_check
   register_commands
   restart_service
