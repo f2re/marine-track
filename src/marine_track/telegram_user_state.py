@@ -11,6 +11,11 @@ from marine_track.models import Sensor
 STATE_FILE = "telegram_user_state.json"
 MAX_SAVED_BBOXES_PER_USER = 10
 BBOX_COORD_PRECISION = 6
+OUTPUT_MODE_ALL = "all"
+OUTPUT_MODE_IMAGES = "images"
+OUTPUT_MODE_FILES = "files"
+OUTPUT_MODES = {OUTPUT_MODE_ALL, OUTPUT_MODE_IMAGES, OUTPUT_MODE_FILES}
+DEFAULT_OUTPUT_MODE = OUTPUT_MODE_ALL
 
 
 @dataclass(frozen=True)
@@ -253,3 +258,37 @@ def bbox_command_args(bbox: SavedBbox) -> list[str]:
 
 def bbox_label(bbox: SavedBbox) -> str:
     return bbox.label
+
+
+def normalize_output_mode(mode: str | None) -> str:
+    value = (mode or DEFAULT_OUTPUT_MODE).strip().lower()
+    return value if value in OUTPUT_MODES else DEFAULT_OUTPUT_MODE
+
+
+def output_mode_label(mode: str) -> str:
+    value = normalize_output_mode(mode)
+    if value == OUTPUT_MODE_IMAGES:
+        return "только картинки"
+    if value == OUTPUT_MODE_FILES:
+        return "только файлы"
+    return "всё"
+
+
+def get_output_mode(output_dir: Path, user_id: int) -> str:
+    state = load_state(output_dir)
+    users = state.get("users")
+    if not isinstance(users, dict):
+        return DEFAULT_OUTPUT_MODE
+    current = users.get(user_key(user_id))
+    if not isinstance(current, dict):
+        return DEFAULT_OUTPUT_MODE
+    return normalize_output_mode(str(current.get("output_mode") or DEFAULT_OUTPUT_MODE))
+
+
+def set_output_mode(output_dir: Path, user_id: int, mode: str) -> str:
+    normalized = normalize_output_mode(mode)
+    state = load_state(output_dir)
+    current = _user_record(state, user_id)
+    current["output_mode"] = normalized
+    save_state(output_dir, state)
+    return normalized
