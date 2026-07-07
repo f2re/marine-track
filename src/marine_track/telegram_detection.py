@@ -22,13 +22,17 @@ from marine_track.telegram_scene_browser import (
     write_temp_aoi,
 )
 from marine_track.telegram_ui import main_menu_markup
-from marine_track.telegram_user_state import save_last_bbox
+from marine_track.telegram_user_state import get_last_bbox, save_last_bbox
 
 DETECT_CALLBACK_PREFIX = "mtdetect"
 
 
 def effective_user_id(update: Update) -> int:
     return int(getattr(update.effective_user, "id", 0) or 0)
+
+
+def menu_for_user(update: Update, config: TelegramBotConfig):
+    return main_menu_markup(has_last_bbox=get_last_bbox(config.output_dir, effective_user_id(update)) is not None)
 
 
 async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
@@ -39,7 +43,7 @@ async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE, con
     if not args:
         await message.reply_text(
             "Формат: /detect <token>. Проще: нажмите 🔎 у найденной сцены или используйте /detectbbox.",
-            reply_markup=main_menu_markup(),
+            reply_markup=menu_for_user(update, config),
         )
         return
     await send_detection_by_token(update, args[0].strip(), config)
@@ -52,7 +56,7 @@ async def detect_default_aoi(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not config.default_aoi.is_file():
         await target.reply_text(
             f"AOI не найден: {config.default_aoi}\nПроверьте MARINE_TRACK_DEFAULT_AOI.",
-            reply_markup=main_menu_markup(),
+            reply_markup=menu_for_user(update, config),
         )
         return
     hours = config.default_lookback_hours
@@ -111,7 +115,7 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await message.reply_text(
             "Формат: /detectbbox [auto|sentinel1|sentinel2] west south east north [hours]\n"
             "Пример: /detectbbox sentinel1 36.5 43.8 38.5 45.0 12",
-            reply_markup=main_menu_markup(),
+            reply_markup=menu_for_user(update, config),
         )
         return
     try:
@@ -131,7 +135,7 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             hours,
         )
     except ValueError as exc:
-        await message.reply_text(f"Ошибка: {exc}", reply_markup=main_menu_markup())
+        await message.reply_text(f"Ошибка: {exc}", reply_markup=menu_for_user(update, config))
         return
 
     start, end = utc_window(hours)
@@ -224,14 +228,14 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
             "Детекция не запущена: нет full-resolution GeoTIFF/COG asset.\n"
             f"Причина: {exc}\n\n"
             "Для ASF ZIP/GRD и preview-only сцен это ожидаемо. Используйте /detectbbox или кнопку 🔎 Найти суда.",
-            reply_markup=main_menu_markup(has_last_bbox=True),
+            reply_markup=menu_for_user(update, config),
         )
         return
     except Exception as exc:
-        await status.edit_text(f"Ошибка детекции: {exc}", reply_markup=main_menu_markup(has_last_bbox=True))
+        await status.edit_text(f"Ошибка детекции: {exc}", reply_markup=menu_for_user(update, config))
         return
 
-    await status.edit_text(summary_text(result), reply_markup=main_menu_markup(has_last_bbox=True))
+    await status.edit_text(summary_text(result), reply_markup=menu_for_user(update, config))
     await send_detection_outputs(target, result)
 
 
