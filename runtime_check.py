@@ -32,6 +32,7 @@ CORE_MODULES = (
     "marine_track.telegram_ui",
     "marine_track.telegram_user_state",
     "marine_track.smoke_check",
+    "marine_track.provider_preflight",
     "marine_track.detection_pipeline",
     "marine_track.detection_scene_search",
     "marine_track.scene_materializer",
