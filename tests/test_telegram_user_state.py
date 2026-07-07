@@ -1,12 +1,19 @@
 from marine_track.models import Sensor
 from marine_track.telegram_user_state import (
+    DEFAULT_OUTPUT_MODE,
     MAX_SAVED_BBOXES_PER_USER,
+    OUTPUT_MODE_FILES,
+    OUTPUT_MODE_IMAGES,
     bbox_command_args,
     bbox_label,
     delete_saved_bbox,
     get_last_bbox,
+    get_output_mode,
     get_saved_bboxes,
+    normalize_output_mode,
+    output_mode_label,
     save_last_bbox,
+    set_output_mode,
 )
 
 
@@ -40,6 +47,7 @@ def test_state_file_corruption_returns_empty_state(tmp_path):
 
     assert get_last_bbox(tmp_path, 123) is None
     assert get_saved_bboxes(tmp_path, 123) == []
+    assert get_output_mode(tmp_path, 123) == DEFAULT_OUTPUT_MODE
 
 
 def test_saved_bboxes_store_multiple_and_latest_is_first(tmp_path):
@@ -96,3 +104,17 @@ def test_delete_saved_bbox_updates_latest_bbox(tmp_path):
     assert [item.id for item in saved] == [first.id]
     assert last is not None
     assert last.sensor == Sensor.SENTINEL1
+
+
+def test_output_mode_defaults_and_normalizes(tmp_path):
+    assert get_output_mode(tmp_path, 123) == DEFAULT_OUTPUT_MODE
+    assert normalize_output_mode("bad") == DEFAULT_OUTPUT_MODE
+    assert output_mode_label(OUTPUT_MODE_IMAGES) == "только картинки"
+
+
+def test_output_mode_roundtrip(tmp_path):
+    assert set_output_mode(tmp_path, 123, OUTPUT_MODE_FILES) == OUTPUT_MODE_FILES
+    assert get_output_mode(tmp_path, 123) == OUTPUT_MODE_FILES
+
+    assert set_output_mode(tmp_path, 123, OUTPUT_MODE_IMAGES) == OUTPUT_MODE_IMAGES
+    assert get_output_mode(tmp_path, 123) == OUTPUT_MODE_IMAGES
