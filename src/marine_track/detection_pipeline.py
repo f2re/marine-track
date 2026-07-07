@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from marine_track.rendering.vessel_crop import render_vessel_crop
 from marine_track.scene_materializer import MaterializedScene, materialize_scene_from_token
 from marine_track.wake import associate_wake_axis_with_vessel
 
+ProgressCallback = Callable[[str], None]
+
 
 @dataclass(frozen=True)
 class DetectionRunResult:
@@ -31,6 +34,11 @@ class DetectionRunResult:
     report_json: Path
 
 
+def report_progress(callback: ProgressCallback | None, text: str) -> None:
+    if callback is not None:
+        callback(text)
+
+
 def run_detection_for_token(
     token: str,
     output_dir: Path,
@@ -42,10 +50,15 @@ def run_detection_for_token(
     guard_window_px: int = 5,
     land_mask_geojson: str | Path | None = None,
     shoreline_buffer_m: float = 0.0,
+    progress_callback: ProgressCallback | None = None,
 ) -> DetectionRunResult:
     run_dir = output_dir / "detections" / token
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    report_progress(progress_callback, "2/5 materialize · подготовка GeoTIFF/COG")
     materialized = materialize_scene_from_token(token, output_dir)
+
+    report_progress(progress_callback, "3/5 detect · CFAR, land mask, wake axis")
     detections = detect_candidates_from_raster(
         path=materialized.raster_path,
         satellite=materialized.scene.sensor.value,
@@ -62,6 +75,7 @@ def run_detection_for_token(
     )
     enrich_detections_with_wakes(materialized.raster_path, detections)
 
+    report_progress(progress_callback, "4/5 render · обзор, crop и файлы")
     geojson = write_geojson(detections, run_dir / "detections.geojson")
     csv = write_csv(detections, run_dir / "detections.csv")
     parquet = write_parquet(detections, run_dir / "detections.parquet")
