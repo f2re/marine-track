@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
 
 from marine_track.telegram_config import load_telegram_config
 from marine_track.telegram_ui import main_menu_markup
+
+VALID_PROVIDER_PROFILES = {"all", "scene", "aux", "core"}
 
 
 def load_dotenv(path: Path) -> None:
@@ -38,21 +37,7 @@ def writable_dir(path: Path) -> str | None:
     return None
 
 
-def telegram_get_me(token: str, timeout: int = 20) -> str:
-    try:
-        with urlopen(f"https://api.telegram.org/bot{token}/getMe", timeout=timeout) as response:  # noqa: S310
-            payload = json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        raise RuntimeError(f"Telegram getMe failed: HTTP {exc.code}; token is probably invalid") from exc
-    except URLError as exc:
-        raise RuntimeError(f"Telegram getMe failed: network error: {exc}") from exc
-    if not payload.get("ok"):
-        raise RuntimeError(f"Telegram getMe failed: {payload}")
-    user = payload.get("result") or {}
-    return f"id={user.get('id')} username=@{user.get('username')}"
-
-
-def run_smoke_check(base_dir: Path, env_file: Path, check_telegram: bool = True) -> list[str]:
+def run_smoke_check(base_dir: Path, env_file: Path) -> list[str]:
     load_dotenv(env_file)
     errors: list[str] = []
     try:
@@ -77,15 +62,10 @@ def run_smoke_check(base_dir: Path, env_file: Path, check_telegram: bool = True)
     except Exception as exc:
         errors.append(f"telegram UI/menu failed: {exc}")
 
-    profile = os.getenv("MARINE_TRACK_PROVIDER_PROFILE", "all")
-    if profile.strip().lower() not in {"all", "scene", "aux", "core", "none"}:
+    profile = os.getenv("MARINE_TRACK_PROVIDER_PROFILE", "all").strip().lower()
+    if profile not in VALID_PROVIDER_PROFILES:
         errors.append(f"invalid MARINE_TRACK_PROVIDER_PROFILE: {profile!r}")
 
-    if check_telegram and config.token:
-        try:
-            print(f"Telegram getMe OK: {telegram_get_me(config.token)}")
-        except Exception as exc:
-            errors.append(str(exc))
     return errors
 
 
@@ -93,14 +73,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Marine Track local smoke check")
     parser.add_argument("--base-dir", default=".", help="Project/install directory for relative paths")
     parser.add_argument("--env-file", default=".env", help="Env file to read")
-    parser.add_argument("--skip-telegram", action="store_true", help="Skip Telegram getMe network check")
     args = parser.parse_args(argv)
 
     base_dir = Path(args.base_dir).resolve()
     env_file = Path(args.env_file)
     if not env_file.is_absolute():
         env_file = base_dir / env_file
-    errors = run_smoke_check(base_dir, env_file, check_telegram=not args.skip_telegram)
+    errors = run_smoke_check(base_dir, env_file)
     if errors:
         print("Smoke check failed:", file=sys.stderr)
         for error in errors:
