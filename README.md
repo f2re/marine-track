@@ -28,13 +28,14 @@ bash deploy_telegram_bot.sh --providers all
 ## Что уже реализовано
 
 - Telegram bot `marine-track-bot`.
-- Главное inline-меню: `Найти суда`, `Сроки снимков`, `Повторить район`, `Сроки района`, `Мои районы`, `Статус`, `Помощь`, `Мой ID`.
+- Главное inline-меню: `Найти суда`, `Сроки снимков`, `Повторить район`, `Сроки района`, `Мои районы`, `Выдача`, `Статус`, `Помощь`, `Мой ID`.
 - Быстрый сценарий без ручного token: default AOI → свежая detection-capable сцена → детекция → файлы.
 - Сохраненные bbox пользователя: `/bboxdates` и `/detectbbox` сохраняют до 10 районов для повторного запуска кнопками.
-- Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/areas`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
+- Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/areas`, `/output`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
 - Пагинация списка сцен: кнопки `◀️ Назад` и `▶️ Далее` перелистывают локально сохраненный результат без нового provider API search.
 - Progress states в Telegram для долгой детекции: search → materialize → detect → render → send.
+- Режим выдачи результата per-user: только картинки, только файлы или всё.
 - Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
 - Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
 - Provider profiles: `all`, `scene`, `aux`, `core`.
@@ -49,7 +50,6 @@ bash deploy_telegram_bot.sh --providers all
 
 ## Что пока не реализовано
 
-- Режим выдачи результата: только картинки / только файлы / всё.
 - Lock-файлы для конкурентного скачивания одного raster asset.
 - Полноценный Sentinel-2 band stack B02/B03/B04/B08 + SCL/cloud/water mask.
 - Speed enrichment из wake geometry.
@@ -120,6 +120,29 @@ bash deploy_telegram_bot.sh --install-system-packages --providers all --yes
 
 ```bash
 bash deploy_telegram_bot.sh --providers core --yes
+```
+
+## Telegram workflow
+
+Основной сценарий:
+
+```text
+/start → 🔎 Найти суда → progress states → результат
+```
+
+Перед детекцией можно выбрать режим выдачи:
+
+```text
+/output
+📤 Выдача
+```
+
+Доступные режимы:
+
+```text
+🖼 Картинки  overview.png и crop судов
+📄 Файлы     GeoJSON, CSV, Parquet, report.json
+🧾 Всё       картинки и файлы
 ```
 
 ## Что делает `deploy_telegram_bot.sh`
