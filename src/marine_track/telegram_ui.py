@@ -6,15 +6,24 @@ from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from marine_track.telegram_config import TelegramBotConfig
-from marine_track.telegram_user_state import SavedBbox, bbox_label
+from marine_track.telegram_user_state import (
+    OUTPUT_MODE_ALL,
+    OUTPUT_MODE_FILES,
+    OUTPUT_MODE_IMAGES,
+    SavedBbox,
+    bbox_label,
+    output_mode_label,
+)
 
 MENU_CALLBACK_PREFIX = "mtmenu"
 AREA_CALLBACK_PREFIX = "mtarea"
+OUTPUT_CALLBACK_PREFIX = "mtout"
 ACTION_DATES_DEFAULT = "dates_default"
 ACTION_DETECT_DEFAULT = "detect_default"
 ACTION_DETECT_LAST_BBOX = "detect_last_bbox"
 ACTION_DATES_LAST_BBOX = "dates_last_bbox"
 ACTION_AREAS = "areas"
+ACTION_OUTPUT_MODE = "output_mode"
 ACTION_MENU = "menu"
 ACTION_STATUS = "status"
 ACTION_HELP = "help"
@@ -41,10 +50,13 @@ def main_menu_markup(has_last_bbox: bool = False, bbox_count: int | None = None)
     rows.extend(
         [
             [
+                InlineKeyboardButton("📤 Выдача", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_OUTPUT_MODE}"),
                 InlineKeyboardButton("⚙️ Статус", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_STATUS}"),
-                InlineKeyboardButton("❓ Помощь", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_HELP}"),
             ],
-            [InlineKeyboardButton("🆔 Мой ID", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_WHOAMI}")],
+            [
+                InlineKeyboardButton("❓ Помощь", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_HELP}"),
+                InlineKeyboardButton("🆔 Мой ID", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_WHOAMI}"),
+            ],
         ]
     )
     return InlineKeyboardMarkup(rows)
@@ -77,8 +89,9 @@ def help_text() -> str:
         "<b>Без ручного ввода</b>\n"
         "• <b>🔎 Найти суда</b> — поиск свежей сцены по default AOI и запуск детекции.\n"
         "• <b>↻ Повторить район</b> — повторить последний bbox из /detectbbox.\n"
-        "• <b>🕒 Сроки района</b> — показать снимки для последнего bbox.\n\n"
-        "• <b>📍 Мои районы</b> — выбрать сохраненный bbox для сроков или детекции.\n\n"
+        "• <b>🕒 Сроки района</b> — показать снимки для последнего bbox.\n"
+        "• <b>📍 Мои районы</b> — выбрать сохраненный bbox для сроков или детекции.\n"
+        "• <b>📤 Выдача</b> — выбрать, что отправлять после детекции: картинки, файлы или всё.\n\n"
         "<b>Команды для точного управления</b>\n"
         "<code>/dates sentinel1 12</code> — сроки по default AOI.\n"
         "<code>/bboxdates sentinel1 36.5 43.8 38.5 45.0 12</code> — сроки по bbox.\n"
@@ -96,6 +109,7 @@ def status_text(
     authorized: bool,
     user_id: int,
     last_bbox_label: str | None = None,
+    output_mode: str = OUTPUT_MODE_ALL,
 ) -> str:
     land_mask = config.land_mask_geojson if config.land_mask_geojson else "off"
     land_mask_exists = path_status(config.land_mask_geojson)
@@ -107,6 +121,7 @@ def status_text(
         f"access: <code>{'allowed' if authorized else 'denied'}</code>\n"
         f"default_aoi: <code>{html.escape(str(config.default_aoi))}</code> ({default_aoi_exists})\n"
         f"last_bbox: <code>{html.escape(last_bbox)}</code>\n"
+        f"output_mode: <code>{html.escape(output_mode_label(output_mode))}</code>\n"
         f"sensor: <code>{config.default_sensor.value}</code>\n"
         f"lookback: <code>{config.default_lookback_hours} ч</code>\n"
         f"max_results: <code>{config.max_results}</code>\n"
@@ -157,3 +172,27 @@ def areas_markup(saved_bboxes: list[SavedBbox]) -> InlineKeyboardMarkup:
         )
     rows.append([InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")])
     return InlineKeyboardMarkup(rows)
+
+
+def output_mode_text(current_mode: str) -> str:
+    return (
+        "<b>Режим выдачи результата</b>\n"
+        f"Сейчас: <code>{html.escape(output_mode_label(current_mode))}</code>\n\n"
+        "<b>Картинки</b> — overview и crop судов.\n"
+        "<b>Файлы</b> — GeoJSON, CSV, Parquet и report.json.\n"
+        "<b>Всё</b> — картинки и файлы."
+    )
+
+
+def output_mode_markup(current_mode: str) -> InlineKeyboardMarkup:
+    def button(label: str, mode: str) -> InlineKeyboardButton:
+        prefix = "✓ " if mode == current_mode else ""
+        return InlineKeyboardButton(f"{prefix}{label}", callback_data=f"{OUTPUT_CALLBACK_PREFIX}:{mode}")
+
+    return InlineKeyboardMarkup(
+        [
+            [button("🖼 Картинки", OUTPUT_MODE_IMAGES), button("📄 Файлы", OUTPUT_MODE_FILES)],
+            [button("🧾 Всё", OUTPUT_MODE_ALL)],
+            [InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")],
+        ]
+    )
