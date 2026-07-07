@@ -22,7 +22,15 @@ from marine_track.telegram_scene_browser import (
     write_temp_aoi,
 )
 from marine_track.telegram_ui import main_menu_markup
-from marine_track.telegram_user_state import get_saved_bboxes, save_last_bbox
+from marine_track.telegram_user_state import (
+    OUTPUT_MODE_ALL,
+    OUTPUT_MODE_FILES,
+    OUTPUT_MODE_IMAGES,
+    get_output_mode,
+    get_saved_bboxes,
+    output_mode_label,
+    save_last_bbox,
+)
 
 DETECT_CALLBACK_PREFIX = "mtdetect"
 
@@ -34,6 +42,10 @@ def effective_user_id(update: Update) -> int:
 def menu_for_user(update: Update, config: TelegramBotConfig):
     count = len(get_saved_bboxes(config.output_dir, effective_user_id(update)))
     return main_menu_markup(has_last_bbox=count > 0, bbox_count=count)
+
+
+def output_mode_for_user(update: Update, config: TelegramBotConfig) -> str:
+    return get_output_mode(config.output_dir, effective_user_id(update))
 
 
 def progress_text(stage: str, detail: str | None = None) -> str:
@@ -221,7 +233,13 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
     if not target:
         return
 
-    status = await target.reply_text(progress_text("1/5 prepare · scene token", f"token={token}"))
+    output_mode = output_mode_for_user(update, config)
+    status = await target.reply_text(
+        progress_text(
+            "1/5 prepare · scene token",
+            f"token={token}\nвыдача={output_mode_label(output_mode)}",
+        )
+    )
     loop = asyncio.get_running_loop()
     try:
         result = await asyncio.to_thread(
@@ -250,12 +268,17 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
         await status.edit_text(f"Ошибка детекции: {exc}", reply_markup=menu_for_user(update, config))
         return
 
-    await status.edit_text(progress_text("5/5 send · отправка результатов", f"detections={len(result.detections)}"))
-    await send_detection_outputs(target, result)
-    await status.edit_text(summary_text(result), reply_markup=menu_for_user(update, config))
+    await status.edit_text(
+        progress_text(
+            "5/5 send · отправка результатов",
+            f"detections={len(result.detections)}\nвыдача={output_mode_label(output_mode)}",
+        )
+    )
+    await send_detection_outputs(target, result, output_mode)
+    await status.edit_text(summary_text(result, output_mode), reply_markup=menu_for_user(update, config))
 
 
-def summary_text(result: DetectionRunResult) -> str:
+def summary_text(result: DetectionRunResult, output_mode: str = OUTPUT_MODE_ALL) -> str:
     scene = result.materialized.scene
     crop_status = "yes" if result.materialized.cropped else "no"
     raster_cache_status = "hit" if result.materialized.cache_hit else "created"
@@ -267,16 +290,19 @@ def summary_text(result: DetectionRunResult) -> str:
         f"detections: {len(result.detections)}\n"
         f"raster_cache: {raster_cache_status}\n"
         f"aoi_crop: {crop_status}\n"
+        f"output_mode: {output_mode_label(output_mode)}\n"
         f"token: {result.token}"
     )
 
 
-async def send_detection_outputs(target, result: DetectionRunResult) -> None:
-    await send_photo_or_document(target, result.overview_png, caption="Обзор: найденные суда")
-    for index, crop in enumerate(result.crop_pngs, start=1):
-        await send_photo_or_document(target, crop, caption=f"Судно #{index}")
-    for path in (result.geojson, result.csv, result.parquet, result.report_json):
-        await send_document(target, path)
+async def send_detection_outputs(target, result: DetectionRunResult, output_mode: str = OUTPUT_MODE_ALL) -> None:
+    if output_mode in {OUTPUT_MODE_ALL, OUTPUT_MODE_IMAGES}:
+        await send_photo_or_document(target, result.overview_png, caption="Обзор: найденные суда")
+        for index, crop in enumerate(result.crop_pngs, start=1):
+            await send_photo_or_document(target, crop, caption=f"Судно #{index}")
+    if output_mode in {OUTPUT_MODE_ALL, OUTPUT_MODE_FILES}:
+        for path in (result.geojson, result.csv, result.parquet, result.report_json):
+            await send_document(target, path)
 
 
 async def send_photo_or_document(target, path: Path, caption: str) -> None:
