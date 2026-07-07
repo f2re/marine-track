@@ -7,6 +7,7 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
 ENV_FILE = PROJECT_DIR / ".env"
+VALID_PROVIDER_PROFILES = {"all", "scene", "aux", "core"}
 
 CORE_MODULES = (
     "numpy",
@@ -68,10 +69,10 @@ def load_dotenv(path: Path = ENV_FILE) -> None:
 
 def provider_profile() -> str:
     value = os.getenv("MARINE_TRACK_PROVIDER_PROFILE", "all").strip().lower()
-    if value == "none":
-        return "core"
-    if value not in {"all", "scene", "aux", "core"}:
-        return "all"
+    if value not in VALID_PROVIDER_PROFILES:
+        raise ValueError(
+            f"invalid MARINE_TRACK_PROVIDER_PROFILE={value!r}; use one of {sorted(VALID_PROVIDER_PROFILES)}"
+        )
     return value
 
 
@@ -92,7 +93,11 @@ def project_path(raw: str) -> Path:
 
 def check_imports() -> list[str]:
     errors: list[str] = []
-    for module_name in required_modules():
+    try:
+        modules = required_modules()
+    except Exception as exc:
+        return [str(exc)]
+    for module_name in modules:
         try:
             importlib.import_module(module_name)
         except Exception as exc:
@@ -131,12 +136,10 @@ def check_paths() -> list[str]:
 
 
 def check_telegram_env() -> list[str]:
-    token = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "").strip()
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if token:
         return []
-    return [
-        "TELEGRAM_BOT_TOKEN is empty; set it in /opt/marine_track/.env or pass TELEGRAM_BOT_TOKEN before deploy"
-    ]
+    return ["TELEGRAM_BOT_TOKEN is empty; set it in /opt/marine_track/.env before deploy"]
 
 
 def check_numeric_env() -> list[str]:
@@ -167,12 +170,13 @@ def check_numeric_env() -> list[str]:
 def main() -> int:
     load_dotenv()
     errors = check_imports() + check_paths() + check_telegram_env() + check_numeric_env()
+    profile = os.getenv("MARINE_TRACK_PROVIDER_PROFILE", "all").strip().lower()
     if errors:
-        print(f"Runtime check failed (provider_profile={provider_profile()}):", file=sys.stderr)
+        print(f"Runtime check failed (provider_profile={profile}):", file=sys.stderr)
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
-    print(f"Runtime check OK (provider_profile={provider_profile()})")
+    print(f"Runtime check OK (provider_profile={profile})")
     return 0
 
 
