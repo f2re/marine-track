@@ -9,7 +9,6 @@ from marine_track.telegram_config import load_telegram_config, parse_admin_ids
 def clear_telegram_env(monkeypatch):
     for key in (
         "TELEGRAM_BOT_TOKEN",
-        "BOT_TOKEN",
         "TELEGRAM_ADMIN_IDS",
         "MARINE_TRACK_DEFAULT_AOI",
         "MARINE_TRACK_OUTPUT_DIR",
@@ -34,13 +33,6 @@ def test_telegram_bot_token_is_read(monkeypatch):
 
     assert config.token == "123:abc"
     assert config.admin_ids == {10, 20}
-
-
-def test_bot_token_fallback_works(monkeypatch):
-    clear_telegram_env(monkeypatch)
-    monkeypatch.setenv("BOT_TOKEN", "fallback-token")
-
-    assert load_telegram_config().token == "fallback-token"
 
 
 def test_admin_ids_parser_accepts_commas_semicolons_and_spaces():
