@@ -170,7 +170,16 @@ precheck_source() {
 
 copy_project() {
   log "syncing $REPO_ROOT -> $INSTALL_DIR"
-  run_root rsync -a --delete --exclude '.git/' --exclude '.venv/' --exclude '.env' --exclude 'runs/' --exclude '__pycache__/' --exclude '*.pyc' "$REPO_ROOT/" "$INSTALL_DIR/"
+  run_root rsync -a --delete \
+    --exclude '.git/' \
+    --exclude '.venv/' \
+    --exclude '.env' \
+    --exclude 'runs/' \
+    --exclude 'data/masks/land.geojson' \
+    --exclude 'data/masks/cache/' \
+    --exclude '__pycache__/' \
+    --exclude '*.pyc' \
+    "$REPO_ROOT/" "$INSTALL_DIR/"
   run_root chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
   run_root chown root:"$SERVICE_USER" "$ENV_FILE"
   run_root chmod 0640 "$ENV_FILE"
@@ -304,8 +313,8 @@ configure_telegram_access() {
 configure_provider_access() {
   local keys=(
     EARTHDATA_USERNAME EARTHDATA_PASSWORD EARTHDATA_TOKEN
-    CDSE_ACCESS_TOKEN CDSE_USERNAME CDSE_PASSWORD CDSE_CLIENT_ID CDSE_CLIENT_SECRET
-    SENTINELHUB_ACCESS_TOKEN SENTINELHUB_CLIENT_ID SENTINELHUB_CLIENT_SECRET
+    CDSE_ACCESS_TOKEN CDSE_TOKEN_URL CDSE_USERNAME CDSE_PASSWORD CDSE_CLIENT_ID CDSE_CLIENT_SECRET
+    SENTINELHUB_ACCESS_TOKEN SENTINELHUB_CLIENT_ID SENTINELHUB_CLIENT_SECRET SENTINELHUB_TOKEN_URL SENTINELHUB_CATALOG_URL
     COPERNICUSMARINE_SERVICE_USERNAME COPERNICUSMARINE_SERVICE_PASSWORD
     MARINE_TRACK_AIS_CSV NOAA_MARINECADASTRE_BASE_URL NOAA_MARINECADASTRE_CACHE_DIR
   )
@@ -365,6 +374,21 @@ project_path() {
   [[ "$raw" = /* ]] && printf '%s' "$raw" || printf '%s/%s' "$INSTALL_DIR" "$raw"
 }
 
+ensure_runtime_dirs() {
+  local output_dir cache_dir mask_value mask_dir noaa_cache
+  output_dir="$(env_get MARINE_TRACK_OUTPUT_DIR)"; [[ -z "$output_dir" ]] && output_dir="runs/telegram"
+  cache_dir="$(env_get MARINE_TRACK_CACHE_DIR)"; [[ -z "$cache_dir" ]] && cache_dir="runs/cache"
+  noaa_cache="$(env_get NOAA_MARINECADASTRE_CACHE_DIR)"; [[ -z "$noaa_cache" ]] && noaa_cache="runs/noaa_ais"
+  mask_value="$(env_get MARINE_TRACK_LAND_MASK_GEOJSON)"
+  if [[ -n "$mask_value" ]]; then
+    mask_dir="$(dirname "$(project_path "$mask_value")")"
+  else
+    mask_dir="$INSTALL_DIR/data/masks"
+  fi
+  run_root mkdir -p "$(project_path "$output_dir")" "$(project_path "$cache_dir")" "$(project_path "$noaa_cache")" "$mask_dir"
+  run_root chown -R "$SERVICE_USER:$SERVICE_USER" "$(project_path "$output_dir")" "$(project_path "$cache_dir")" "$(project_path "$noaa_cache")" "$mask_dir"
+}
+
 prepare_land_mask_once() {
   local auto force mask source cache_dir aoi
   auto="$(env_get MARINE_TRACK_AUTO_UPDATE_LAND_MASK)"; [[ -z "$auto" ]] && auto="1"
@@ -390,7 +414,14 @@ prepare_land_mask_once() {
   run_root chown -R "$SERVICE_USER:$SERVICE_USER" "$(dirname "$mask")" "$cache_dir"
   local args=(update-land-mask --output "$mask" --source "$source" --cache-dir "$cache_dir" --force)
   [[ -f "$aoi" ]] && args+=(--aoi "$aoi")
-  run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/marine-track" "${args[@]}"
+  if run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/marine-track" "${args[@]}"; then
+    run_root chown -R "$SERVICE_USER:$SERVICE_USER" "$(dirname "$mask")" "$cache_dir"
+  else
+    warn "land mask update failed; continuing because land mask is optional"
+    if [[ "$(env_get MARINE_TRACK_LAND_MASK_GEOJSON)" == "$mask" ]]; then
+      set_env_key "MARINE_TRACK_LAND_MASK_GEOJSON" ""
+    fi
+  fi
 }
 
 cleanup_runtime_files() {
@@ -416,7 +447,7 @@ runtime_check() {
   run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" MARINE_TRACK_PROVIDER_PROFILE="$PROVIDER_PROFILE" "$VENV_DIR/bin/python" "$INSTALL_DIR/runtime_check.py"
 }
 
-telegram_healthcheck() {
+telegram_getme_check() {
   run_user "$SERVICE_USER" env HOME="$INSTALL_DIR" "$VENV_DIR/bin/python" - "$ENV_FILE" <<'PY'
 from pathlib import Path
 from urllib.request import urlopen
@@ -539,7 +570,7 @@ provider_profile=$PROVIDER_PROFILE
 venv=$VENV_DIR
 unit=$UNIT_PATH
 runtime_check=ok
-telegram_healthcheck=ok
+telegram_getme=ok
 provider_preflight=ok
 telegram_commands=registered
 EOF
@@ -563,10 +594,11 @@ main() {
   configure_telegram_access
   configure_provider_access
   ensure_venv_and_deps
+  ensure_runtime_dirs
   prepare_land_mask_once
   cleanup_runtime_files
   runtime_check
-  telegram_healthcheck
+  telegram_getme_check
   provider_preflight
   register_commands
   restart_service

@@ -30,6 +30,7 @@ CORE_MODULES = (
     "marine_track.telegram_detection",
     "marine_track.telegram_ui",
     "marine_track.telegram_user_state",
+    "marine_track.smoke_check",
     "marine_track.detection_pipeline",
     "marine_track.detection_scene_search",
     "marine_track.scene_materializer",
@@ -118,6 +119,14 @@ def check_paths() -> list[str]:
         probe.unlink(missing_ok=True)
     except Exception as exc:
         errors.append(f"output dir is not writable: {out_dir}: {exc}")
+    cache_dir = project_path(os.getenv("MARINE_TRACK_CACHE_DIR", "runs/cache"))
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        probe = cache_dir / ".runtime_write_test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except Exception as exc:
+        errors.append(f"cache dir is not writable: {cache_dir}: {exc}")
     return errors
 
 
@@ -138,6 +147,12 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_MAX_CONCURRENT_JOBS",
         "MARINE_TRACK_DETECTION_MAX_CROPS",
         "MARINE_TRACK_SHORELINE_BUFFER_M",
+        "MARINE_TRACK_SCENE_SEARCH_TTL_MIN",
+        "MARINE_TRACK_SCENE_SEARCH_CACHE_RETENTION_DAYS",
+        "MARINE_TRACK_RASTER_CACHE_RETENTION_DAYS",
+        "MARINE_TRACK_MASK_CACHE_RETENTION_DAYS",
+        "MARINE_TRACK_DETECTION_OUTPUT_RETENTION_DAYS",
+        "MARINE_TRACK_RUN_OUTPUT_RETENTION_DAYS",
     ):
         raw = os.getenv(name)
         if raw is None:

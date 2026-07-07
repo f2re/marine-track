@@ -155,9 +155,6 @@ git pull
 python -m pytest -q
 ruff check src tests
 bash deploy_telegram_bot.sh --providers all --yes
-cd /opt/marine_track
-source .venv/bin/activate
-python register_telegram_commands.py
 ```
 
 With system package refresh:
@@ -166,7 +163,7 @@ With system package refresh:
 bash deploy_telegram_bot.sh --install-system-packages --providers all --yes
 ```
 
-Deploy keeps installed `.env` and `runs/` intact, syncs code to `/opt/marine_track`, adds missing `.env.example` keys without overwriting existing values, updates the virtual environment according to provider profile, runs `runtime_check.py`, restarts the service and tries to register slash commands.
+Deploy keeps installed `.env`, `.venv`, generated land mask and `runs/` intact, syncs code to `/opt/marine_track`, adds missing `.env.example` keys without overwriting existing values, updates the virtual environment according to provider profile, runs `runtime_check.py`, checks Telegram `getMe`, runs provider preflight, registers slash commands and restarts the service.
 
 ## Scene registry
 

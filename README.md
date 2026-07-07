@@ -17,7 +17,7 @@ bash install_telegram_bot.sh --providers all
 bash deploy_telegram_bot.sh --providers all
 ```
 
-Все прежние wrapper/fix/helper scripts выведены из эксплуатации. Их логика встроена в `deploy_telegram_bot.sh`: запрос Telegram/provider-доступов, установка provider extras, Telegram `getMe` healthcheck, provider preflight, одноразовая подготовка land mask, cleanup, регистрация Telegram-команд и рестарт systemd.
+Все прежние wrapper/fix/helper scripts удалены из рабочего пути. Их логика встроена в `deploy_telegram_bot.sh`: запрос Telegram/provider-доступов, установка provider extras, Telegram `getMe` healthcheck, provider preflight, одноразовая подготовка land mask, cleanup, регистрация Telegram-команд и рестарт systemd.
 
 ## Что уже реализовано
 
@@ -79,6 +79,13 @@ sudo systemctl status marine-track-bot.service --no-pager
 sudo journalctl -u marine-track-bot.service -n 100 --no-pager
 ```
 
+Локальный smoke-check без запуска polling:
+
+```bash
+cd /opt/marine_track
+sudo -u marinetrack .venv/bin/python -m marine_track.smoke_check --base-dir /opt/marine_track --env-file /opt/marine_track/.env
+```
+
 ## Деплой после `git pull`
 
 ```bash
@@ -107,7 +114,7 @@ bash deploy_telegram_bot.sh --providers core --yes
 
 ## Что делает `deploy_telegram_bot.sh`
 
-1. Копирует текущий checkout в `/opt/marine_track`, не перетирая `.env`, `.venv` и `runs`.
+1. Копирует текущий checkout в `/opt/marine_track`, не перетирая `.env`, `.venv`, `runs` и сгенерированный land mask.
 2. Синхронизирует новые ключи из `.env.example` в `/opt/marine_track/.env`.
 3. Запрашивает или принимает через environment `TELEGRAM_BOT_TOKEN` и `TELEGRAM_ADMIN_IDS`.
 4. Запрашивает provider-доступы для активного профиля.
@@ -122,6 +129,17 @@ bash deploy_telegram_bot.sh --providers core --yes
 
 Если `TELEGRAM_BOT_TOKEN` пустой или неверный, deploy падает до рестарта сервиса.
 
+Recovery для пустого или неверного token:
+
+```bash
+sudoedit /opt/marine_track/.env
+sudo chown root:marinetrack /opt/marine_track/.env
+sudo chmod 0640 /opt/marine_track/.env
+bash deploy_telegram_bot.sh --providers all --yes
+```
+
+В `.env` должен быть задан `TELEGRAM_BOT_TOKEN=<bot-token>`. Проверка `getMe` выполняется до `systemctl restart`.
+
 ## `.env`
 
 Ожидаемые права:
@@ -129,6 +147,8 @@ bash deploy_telegram_bot.sh --providers core --yes
 ```text
 /opt/marine_track/.env  root:marinetrack 0640
 ```
+
+`install_telegram_bot.sh` создает service user `marinetrack`, каталог `/opt/marine_track`, `.env` из `.env.example` при первом запуске и systemd unit `marine-track-bot.service`. `deploy_telegram_bot.sh` добавляет новые ключи из `.env.example` в существующий `.env`, не удаляя пользовательские значения.
 
 Минимум:
 
@@ -174,7 +194,7 @@ marine-track cleanup-cache
 
 ## Land/shoreline mask
 
-При `install_telegram_bot.sh` и `deploy_telegram_bot.sh` маска собирается один раз: если `MARINE_TRACK_LAND_MASK_GEOJSON` уже существует и `MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0`, повторного download не будет.
+При `install_telegram_bot.sh` и `deploy_telegram_bot.sh` маска собирается один раз: если `MARINE_TRACK_LAND_MASK_GEOJSON` уже существует и `MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0`, повторного download не будет. Повторный deploy не удаляет `data/masks/land.geojson`. Если download mask не удался, deploy пишет warning и продолжает запуск без land mask, потому что land/shoreline suppression опционален.
 
 Настройки:
 
@@ -280,6 +300,6 @@ MARINE_TRACK_OUTPUT_DIR/detections/<token>/report.json
 
 ## Текущий план реализации
 
-См. `docs/IMPLEMENTATION_PLAN.md` и `docs/UX_REVIEW.md`.
+См. `docs/IMPLEMENTATION_PLAN.md`, `docs/UX_REVIEW.md`, `docs/PROVIDERS.md` и `docs/TROUBLESHOOTING.md`.
 
 Ближайший следующий этап: progress states для долгих операций, режим “только картинки / только файлы” и AIS track rendering.

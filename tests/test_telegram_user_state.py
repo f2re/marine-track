@@ -37,6 +37,13 @@ def test_last_bbox_missing_returns_none(tmp_path):
     assert get_last_bbox(tmp_path, 999) is None
 
 
+def test_state_file_corruption_returns_empty_state(tmp_path):
+    (tmp_path / "telegram_user_state.json").write_text("{not-json", encoding="utf-8")
+
+    assert get_last_bbox(tmp_path, 123) is None
+    assert get_saved_bboxes(tmp_path, 123) == []
+
+
 def test_saved_bboxes_store_multiple_and_sync_last_bbox(tmp_path):
     first = save_last_bbox(tmp_path, 123, Sensor.SENTINEL1, 36.5, 43.8, 38.5, 45.0, 12)
     second = save_last_bbox(tmp_path, 123, Sensor.SENTINEL2, 30.0, 40.0, 31.0, 41.0, 24)

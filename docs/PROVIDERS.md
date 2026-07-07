@@ -11,7 +11,7 @@ bash install_telegram_bot.sh --providers all
 bash deploy_telegram_bot.sh --providers all
 ```
 
-`deploy_telegram_bot.sh` содержит всю логику, которая раньше была вынесена в отдельные helper scripts: запрос ключей, provider preflight, Telegram healthcheck, регистрация команд, подготовка land mask и cleanup.
+`deploy_telegram_bot.sh` содержит всю логику, которая раньше была вынесена в отдельные helper scripts: запрос ключей, provider preflight, Telegram healthcheck, регистрация команд, подготовка land mask и cleanup. Отдельных provider configure/preflight entrypoints в рабочем пути нет.
 
 ## Provider dependency profiles
 
@@ -51,7 +51,7 @@ bash install_telegram_bot.sh --providers core --yes
 
 `install_telegram_bot.sh` при первичной установке делегирует настройку в `deploy_telegram_bot.sh`. В интерактивном режиме deploy проходит по активным провайдерам выбранного профиля, показывает краткую инструкцию и предлагает заполнить недостающие значения в `.env`. Уже заполненные значения не перезаписываются.
 
-Проверка без сетевых запросов встроена в deploy. Она падает только при отсутствии установленных provider-модулей, выбранных профилем. Отсутствующие ключи показываются как предупреждения, чтобы можно было поставить сервис заранее и добавить доступы позже.
+Проверка provider readiness без сетевых запросов встроена в deploy. Она падает только при отсутствии установленных provider-модулей, выбранных профилем. Отсутствующие ключи показываются как предупреждения, чтобы можно было поставить сервис заранее и добавить доступы позже.
 
 ## Scene providers
 
