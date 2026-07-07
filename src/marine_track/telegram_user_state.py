@@ -14,17 +14,6 @@ BBOX_COORD_PRECISION = 6
 
 
 @dataclass(frozen=True)
-class LastBbox:
-    sensor: Sensor
-    west: float
-    south: float
-    east: float
-    north: float
-    hours: int
-    updated_at: str
-
-
-@dataclass(frozen=True)
 class SavedBbox:
     id: str
     label: str
@@ -97,18 +86,6 @@ def _saved_label(sensor: Sensor, west: float, south: float, east: float, north: 
     )
 
 
-def _last_bbox_payload(bbox: SavedBbox | LastBbox) -> dict[str, object]:
-    return {
-        "sensor": bbox.sensor.value,
-        "west": bbox.west,
-        "south": bbox.south,
-        "east": bbox.east,
-        "north": bbox.north,
-        "hours": bbox.hours,
-        "updated_at": bbox.updated_at,
-    }
-
-
 def _saved_bbox_payload(bbox: SavedBbox) -> dict[str, object]:
     return {
         "id": bbox.id,
@@ -125,23 +102,6 @@ def _saved_bbox_payload(bbox: SavedBbox) -> dict[str, object]:
     }
 
 
-def _parse_last_bbox(raw: object) -> LastBbox | None:
-    if not isinstance(raw, dict):
-        return None
-    try:
-        return LastBbox(
-            sensor=Sensor(str(raw["sensor"])),
-            west=float(raw["west"]),
-            south=float(raw["south"]),
-            east=float(raw["east"]),
-            north=float(raw["north"]),
-            hours=int(raw["hours"]),
-            updated_at=str(raw.get("updated_at") or ""),
-        )
-    except Exception:
-        return None
-
-
 def _parse_saved_bbox(raw: object) -> SavedBbox | None:
     if not isinstance(raw, dict):
         return None
@@ -152,10 +112,11 @@ def _parse_saved_bbox(raw: object) -> SavedBbox | None:
         east = _norm_coord(float(raw["east"]))
         north = _norm_coord(float(raw["north"]))
         hours = int(raw["hours"])
-        bbox_id = str(raw.get("id") or _bbox_id(sensor, west, south, east, north, hours))
-        label = str(raw.get("label") or _saved_label(sensor, west, south, east, north, hours))
-        created_at = str(raw.get("created_at") or raw.get("updated_at") or "")
-        updated_at = str(raw.get("updated_at") or created_at)
+        bbox_id = str(raw["id"])
+        label = str(raw["label"])
+        created_at = str(raw["created_at"])
+        updated_at = str(raw["updated_at"])
+        use_count = max(0, int(raw["use_count"]))
         return SavedBbox(
             id=bbox_id,
             label=label,
@@ -167,27 +128,10 @@ def _parse_saved_bbox(raw: object) -> SavedBbox | None:
             hours=hours,
             created_at=created_at,
             updated_at=updated_at,
-            use_count=max(0, int(raw.get("use_count") or 0)),
+            use_count=use_count,
         )
     except Exception:
         return None
-
-
-def _saved_from_last_bbox(bbox: LastBbox) -> SavedBbox:
-    created_at = bbox.updated_at or _now()
-    return SavedBbox(
-        id=_bbox_id(bbox.sensor, bbox.west, bbox.south, bbox.east, bbox.north, bbox.hours),
-        label=_saved_label(bbox.sensor, bbox.west, bbox.south, bbox.east, bbox.north, bbox.hours),
-        sensor=bbox.sensor,
-        west=_norm_coord(bbox.west),
-        south=_norm_coord(bbox.south),
-        east=_norm_coord(bbox.east),
-        north=_norm_coord(bbox.north),
-        hours=bbox.hours,
-        created_at=created_at,
-        updated_at=bbox.updated_at or created_at,
-        use_count=1,
-    )
 
 
 def _user_record(state: dict[str, object], user_id: int) -> dict[str, object]:
@@ -200,13 +144,6 @@ def _user_record(state: dict[str, object], user_id: int) -> dict[str, object]:
         current = {}
     users[user_key(user_id)] = current
     return current
-
-
-def _sync_last_bbox(current: dict[str, object], saved_bboxes: list[SavedBbox]) -> None:
-    if saved_bboxes:
-        current["last_bbox"] = _last_bbox_payload(saved_bboxes[0])
-    else:
-        current.pop("last_bbox", None)
 
 
 def save_last_bbox(
@@ -253,7 +190,6 @@ def save_last_bbox(
     saved.insert(0, record)
     saved = saved[:MAX_SAVED_BBOXES_PER_USER]
     current["saved_bboxes"] = [_saved_bbox_payload(item) for item in saved]
-    _sync_last_bbox(current, saved)
     save_state(output_dir, state)
     return record
 
@@ -266,10 +202,6 @@ def get_saved_bboxes_from_user(current: dict[str, object]) -> list[SavedBbox]:
             bbox = _parse_saved_bbox(raw)
             if bbox is not None:
                 saved.append(bbox)
-    if not saved:
-        last_bbox = _parse_last_bbox(current.get("last_bbox"))
-        if last_bbox is not None:
-            saved.append(_saved_from_last_bbox(last_bbox))
     return saved[:MAX_SAVED_BBOXES_PER_USER]
 
 
@@ -299,35 +231,16 @@ def delete_saved_bbox(output_dir: Path, user_id: int, bbox_id: str) -> bool:
     if len(kept) == len(saved):
         return False
     current["saved_bboxes"] = [_saved_bbox_payload(item) for item in kept]
-    _sync_last_bbox(current, kept)
     save_state(output_dir, state)
     return True
 
 
-def get_last_bbox(output_dir: Path, user_id: int) -> LastBbox | None:
-    state = load_state(output_dir)
-    users = state.get("users")
-    if not isinstance(users, dict):
-        return None
-    current = users.get(user_key(user_id))
-    if not isinstance(current, dict):
-        return None
-    saved = get_saved_bboxes_from_user(current)
-    if saved:
-        latest = saved[0]
-        return LastBbox(
-            sensor=latest.sensor,
-            west=latest.west,
-            south=latest.south,
-            east=latest.east,
-            north=latest.north,
-            hours=latest.hours,
-            updated_at=latest.updated_at,
-        )
-    return _parse_last_bbox(current.get("last_bbox"))
+def get_last_bbox(output_dir: Path, user_id: int) -> SavedBbox | None:
+    saved = get_saved_bboxes(output_dir, user_id)
+    return saved[0] if saved else None
 
 
-def bbox_command_args(bbox: LastBbox | SavedBbox) -> list[str]:
+def bbox_command_args(bbox: SavedBbox) -> list[str]:
     return [
         bbox.sensor.value,
         str(bbox.west),
@@ -338,7 +251,5 @@ def bbox_command_args(bbox: LastBbox | SavedBbox) -> list[str]:
     ]
 
 
-def bbox_label(bbox: LastBbox | SavedBbox) -> str:
-    if isinstance(bbox, SavedBbox):
-        return bbox.label
-    return _saved_label(bbox.sensor, bbox.west, bbox.south, bbox.east, bbox.north, bbox.hours)
+def bbox_label(bbox: SavedBbox) -> str:
+    return bbox.label
