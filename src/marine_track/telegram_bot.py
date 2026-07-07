@@ -9,36 +9,18 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from marine_track.telegram_config import TelegramBotConfig, load_telegram_config
 from marine_track.telegram_detection import (
     DETECT_CALLBACK_PREFIX,
-)
-from marine_track.telegram_detection import (
     detect_bbox_command as scene_detect_bbox_command,
-)
-from marine_track.telegram_detection import (
     detect_callback as scene_detect_callback,
-)
-from marine_track.telegram_detection import (
     detect_command as scene_detect_command,
-)
-from marine_track.telegram_detection import (
     detect_default_aoi as scene_detect_default_aoi,
 )
 from marine_track.telegram_scene_browser import (
     CALLBACK_PREFIX,
     PAGE_CALLBACK_PREFIX,
-)
-from marine_track.telegram_scene_browser import (
     bbox_dates_command as scene_bbox_dates_command,
-)
-from marine_track.telegram_scene_browser import (
     image_callback as scene_image_callback,
-)
-from marine_track.telegram_scene_browser import (
     image_command as scene_image_command,
-)
-from marine_track.telegram_scene_browser import (
     list_dates_command as scene_dates_command,
-)
-from marine_track.telegram_scene_browser import (
     scene_page_callback as scene_scene_page_callback,
 )
 from marine_track.telegram_ui import (
@@ -49,14 +31,18 @@ from marine_track.telegram_ui import (
     ACTION_DETECT_LAST_BBOX,
     ACTION_HELP,
     ACTION_MENU,
+    ACTION_OUTPUT_MODE,
     ACTION_STATUS,
     ACTION_WHOAMI,
     AREA_CALLBACK_PREFIX,
     MENU_CALLBACK_PREFIX,
+    OUTPUT_CALLBACK_PREFIX,
     areas_markup,
     areas_text,
     help_text,
     main_menu_markup,
+    output_mode_markup,
+    output_mode_text,
     start_text,
     status_text,
 )
@@ -65,8 +51,11 @@ from marine_track.telegram_user_state import (
     bbox_label,
     delete_saved_bbox,
     get_last_bbox,
+    get_output_mode,
     get_saved_bbox,
     get_saved_bboxes,
+    output_mode_label,
+    set_output_mode,
 )
 
 CONFIG: TelegramBotConfig | None = None
@@ -94,6 +83,10 @@ def effective_user_id(update: Update) -> int:
 def last_bbox_label(update: Update) -> str | None:
     bbox = get_last_bbox(get_config().output_dir, effective_user_id(update))
     return bbox_label(bbox) if bbox else None
+
+
+def user_output_mode(update: Update) -> str:
+    return get_output_mode(get_config().output_dir, effective_user_id(update))
 
 
 def saved_bbox_count(update: Update) -> int:
@@ -161,7 +154,13 @@ async def whoami_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message:
         await update.effective_message.reply_text(
-            status_text(get_config(), is_authorized(update), effective_user_id(update), last_bbox_label(update)),
+            status_text(
+                get_config(),
+                is_authorized(update),
+                effective_user_id(update),
+                last_bbox_label(update),
+                user_output_mode(update),
+            ),
             parse_mode=ParseMode.HTML,
             reply_markup=user_menu_markup(update),
         )
@@ -173,6 +172,18 @@ async def areas_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if update.effective_message:
         text, markup = saved_bbox_menu(update)
         await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def output_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_authorized(update):
+        return
+    if update.effective_message:
+        mode = user_output_mode(update)
+        await update.effective_message.reply_text(
+            output_mode_text(mode),
+            parse_mode=ParseMode.HTML,
+            reply_markup=output_mode_markup(mode),
+        )
 
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -193,7 +204,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if action == ACTION_STATUS:
         await query.message.reply_text(
-            status_text(get_config(), is_authorized(update), effective_user_id(update), last_bbox_label(update)),
+            status_text(
+                get_config(),
+                is_authorized(update),
+                effective_user_id(update),
+                last_bbox_label(update),
+                user_output_mode(update),
+            ),
             parse_mode=ParseMode.HTML,
             reply_markup=user_menu_markup(update),
         )
@@ -203,6 +220,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"Ваш Telegram user id: <code>{effective_user_id(update)}</code>",
             parse_mode=ParseMode.HTML,
             reply_markup=user_menu_markup(update),
+        )
+        return
+    if action == ACTION_OUTPUT_MODE:
+        if not await require_authorized(update):
+            return
+        mode = user_output_mode(update)
+        await query.message.reply_text(
+            output_mode_text(mode),
+            parse_mode=ParseMode.HTML,
+            reply_markup=output_mode_markup(mode),
         )
         return
     if action == ACTION_AREAS:
@@ -236,6 +263,22 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             else:
                 await scene_detect_bbox_command(update, context, get_config())
         return
+
+
+async def output_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    if not await require_authorized(update):
+        return
+    _, _, mode = query.data.partition(":")
+    saved = set_output_mode(get_config().output_dir, effective_user_id(update), mode)
+    await query.message.reply_text(
+        f"Режим выдачи: <code>{output_mode_label(saved)}</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=output_mode_markup(saved),
+    )
 
 
 async def area_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -331,13 +374,14 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("whoami", whoami_command))
     app.add_handler(CommandHandler("areas", areas_command))
-    app.add_handler(CommandHandler("bboxlist", areas_command))
+    app.add_handler(CommandHandler("output", output_command))
     app.add_handler(CommandHandler("dates", dates_command))
     app.add_handler(CommandHandler("bboxdates", bboxdates_command))
     app.add_handler(CommandHandler("image", image_command))
     app.add_handler(CommandHandler("detect", detect_command))
     app.add_handler(CommandHandler("detectbbox", detectbbox_command))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=f"^{MENU_CALLBACK_PREFIX}:"))
+    app.add_handler(CallbackQueryHandler(output_callback, pattern=f"^{OUTPUT_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(area_callback, pattern=f"^{AREA_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(scene_scene_page_callback, pattern=f"^{PAGE_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(image_callback, pattern=f"^{CALLBACK_PREFIX}:"))
