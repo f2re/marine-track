@@ -39,6 +39,7 @@ CORE_MODULES = (
     "marine_track.land_mask",
     "marine_track.land_mask_update",
     "marine_track.provider_auth",
+    "marine_track.ais",
     "marine_track.ais_sources",
     "marine_track.noaa_ais_source",
 )
@@ -157,14 +158,17 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_MASK_CACHE_RETENTION_DAYS",
         "MARINE_TRACK_DETECTION_OUTPUT_RETENTION_DAYS",
         "MARINE_TRACK_RUN_OUTPUT_RETENTION_DAYS",
+        "MARINE_TRACK_AIS_MATCH_WINDOW_MIN",
+        "MARINE_TRACK_AIS_TRACK_WINDOW_MIN",
+        "MARINE_TRACK_AIS_MAX_DISTANCE_M",
     ):
         raw = os.getenv(name)
         if raw is None:
             continue
         try:
-            int(raw)
+            float(raw) if name == "MARINE_TRACK_AIS_MAX_DISTANCE_M" else int(raw)
         except ValueError:
-            errors.append(f"{name} must be integer, got {raw!r}")
+            errors.append(f"{name} must be numeric, got {raw!r}")
     return errors
 
 
