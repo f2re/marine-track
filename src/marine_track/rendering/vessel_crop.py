@@ -40,8 +40,11 @@ def render_vessel_crop(
         image = dataset.read(1, window=window).astype("float32")
         if dataset.nodata is not None:
             image[image == dataset.nodata] = np.nan
+        transform = dataset.transform
+        crs = dataset.crs
 
     canvas = grayscale_to_bgr(image)
+    draw_ais_track(canvas, detection, transform, crs, row0=row0, col0=col0)
     local_x = int(round(col - col0))
     local_y = int(round(row - row0))
     draw_crop_overlay(canvas, local_x, local_y, detection, index)
@@ -54,8 +57,12 @@ def draw_crop_overlay(canvas: np.ndarray, x: int, y: int, detection: VesselDetec
     cv2.line(canvas, (x - 18, y), (x + 18, y), (0, 255, 255), 1)
     cv2.line(canvas, (x, y - 18), (x, y + 18), (0, 255, 255), 1)
     draw_wake_axis(canvas, x, y, detection)
+    ais = detection.validation.get("ais")
+    ais_suffix = ""
+    if isinstance(ais, dict):
+        ais_suffix = f" AIS={ais.get('mmsi')} d={float(ais.get('distance_m', 0.0)):.0f}m"
     lines = [
-        f"#{index} conf={detection.confidence:.2f}",
+        f"#{index} conf={detection.confidence:.2f}{ais_suffix}",
         f"lon={detection.lon:.5f} lat={detection.lat:.5f}",
         f"heading={detection.heading_deg if detection.heading_deg is not None else 'n/a'}",
         f"speed={detection.speed_knots if detection.speed_knots is not None else 'n/a'} kt",
@@ -64,7 +71,7 @@ def draw_crop_overlay(canvas: np.ndarray, x: int, y: int, detection: VesselDetec
     for idx, line in enumerate(lines):
         cv2.putText(
             canvas,
-            line[:100],
+            line[:120],
             (8, 20 + idx * 18),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.48,
@@ -86,3 +93,28 @@ def draw_wake_axis(canvas: np.ndarray, x: int, y: int, detection: VesselDetectio
     dx = int(round(math.cos(angle_rad) * length))
     dy = int(round(math.sin(angle_rad) * length))
     cv2.line(canvas, (x - dx, y - dy), (x + dx, y + dy), (255, 180, 0), 2)
+
+
+def draw_ais_track(canvas: np.ndarray, detection: VesselDetection, transform, crs, row0: int, col0: int) -> None:
+    ais = detection.metadata.get("ais")
+    if not isinstance(ais, dict):
+        return
+    track = ais.get("track")
+    if not isinstance(track, list) or len(track) < 2:
+        return
+    points: list[tuple[int, int]] = []
+    for point in track:
+        if not isinstance(point, dict):
+            continue
+        try:
+            row, col = lonlat_to_pixel(float(point["lon"]), float(point["lat"]), transform, crs)
+        except Exception:
+            continue
+        x = int(round(col - col0))
+        y = int(round(row - row0))
+        if -50 <= x <= canvas.shape[1] + 50 and -50 <= y <= canvas.shape[0] + 50:
+            points.append((x, y))
+    if len(points) < 2:
+        return
+    cv2.polylines(canvas, [np.array(points, dtype=np.int32)], False, (0, 180, 255), 2, cv2.LINE_AA)
+    cv2.circle(canvas, points[-1], 4, (0, 180, 255), -1)
