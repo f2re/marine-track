@@ -18,6 +18,7 @@ class SpeedMethod(str, Enum):
     SENTINEL2_INTERBAND = "sentinel2_interband_displacement"
     KELVIN_WAVELENGTH = "kelvin_wavelength"
     SAR_OFFSET_EXPERIMENTAL = "sar_offset_experimental"
+    AIS_SOG = "ais_sog"
 
 
 class HeadingMethod(str, Enum):
@@ -25,6 +26,7 @@ class HeadingMethod(str, Enum):
     WAKE_AXIS = "wake_axis"
     HULL_ORIENTATION = "hull_orientation"
     SENTINEL2_INTERBAND = "sentinel2_interband_displacement"
+    AIS_COG = "ais_course_over_ground"
 
 
 class Scene(BaseModel):
