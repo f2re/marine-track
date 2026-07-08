@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
 
+from marine_track.ais import match_detection_to_ais, read_ais_csv
 from marine_track.estimation import bearing_deg
 from marine_track.geospatial import RasterGeoContext, lonlat_to_pixel, pixel_to_lonlat
-from marine_track.models import HeadingMethod, VesselDetection
+from marine_track.models import HeadingMethod, SpeedMethod, VesselDetection
 from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.raster_detection import detect_candidates_from_raster
 from marine_track.rendering.overview import render_overview
@@ -37,6 +40,24 @@ class DetectionRunResult:
 def report_progress(callback: ProgressCallback | None, text: str) -> None:
     if callback is not None:
         callback(text)
+
+
+def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
 
 
 def run_detection_for_token(
@@ -74,6 +95,7 @@ def run_detection_for_token(
         shoreline_buffer_m=shoreline_buffer_m,
     )
     enrich_detections_with_wakes(materialized.raster_path, detections)
+    enrich_detections_with_ais(detections)
 
     report_progress(progress_callback, "4/5 render · обзор, crop и файлы")
     geojson = write_geojson(detections, run_dir / "detections.geojson")
@@ -126,6 +148,121 @@ def render_crops(
         output = crop_dir / f"vessel_{index:03d}_{detection.detection_id}.png"
         crops.append(render_vessel_crop(raster_path, detection, output, index=index))
     return crops
+
+
+def enrich_detections_with_ais(
+    detections: list[VesselDetection],
+    ais_csv: str | Path | None = None,
+    match_window_min: int | None = None,
+    track_window_min: int | None = None,
+    max_distance_m: float | None = None,
+    max_track_points: int = 200,
+) -> None:
+    if not detections:
+        return
+    raw_path = str(ais_csv or os.getenv("MARINE_TRACK_AIS_CSV", "")).strip()
+    if not raw_path:
+        return
+    path = Path(raw_path)
+    if not path.is_file():
+        add_ais_warning(detections, f"AIS CSV not found: {path}")
+        return
+
+    match_window_min = match_window_min or env_int("MARINE_TRACK_AIS_MATCH_WINDOW_MIN", 30, 1, 24 * 60)
+    track_window_min = track_window_min or env_int("MARINE_TRACK_AIS_TRACK_WINDOW_MIN", 60, 1, 24 * 60)
+    max_distance_m = max_distance_m or env_float("MARINE_TRACK_AIS_MAX_DISTANCE_M", 3000.0, 1.0, 100_000.0)
+
+    try:
+        ais_df = read_ais_csv(path)
+    except Exception as exc:
+        add_ais_warning(detections, f"AIS CSV read failed: {exc}")
+        return
+    if ais_df.empty:
+        return
+
+    for detection in detections:
+        match = match_detection_to_ais(
+            detection,
+            ais_df,
+            time_window=timedelta(minutes=match_window_min),
+            max_distance_m=max_distance_m,
+        )
+        if match is None:
+            continue
+        track = ais_track_points(
+            ais_df,
+            str(match["mmsi"]),
+            detection.acquisition_time,
+            window_min=track_window_min,
+            max_points=max_track_points,
+        )
+        detection.validation_status = "ais_matched"
+        detection.validation = {**detection.validation, "ais": match}
+        detection.metadata = {
+            **detection.metadata,
+            "ais": {
+                "source": str(path),
+                "match_window_min": match_window_min,
+                "track_window_min": track_window_min,
+                "max_distance_m": max_distance_m,
+                "match": match,
+                "track": track,
+            },
+        }
+        speed = match.get("ais_sog_knots")
+        if isinstance(speed, (int, float)) and math.isfinite(float(speed)):
+            detection.speed_knots = float(speed)
+            detection.speed_method = SpeedMethod.AIS_SOG
+            detection.speed_reference = f"ais:{match['mmsi']}"
+        cog = match.get("ais_cog_deg")
+        if detection.heading_deg is None and isinstance(cog, (int, float)) and math.isfinite(float(cog)):
+            detection.heading_deg = float(cog) % 360.0
+            detection.heading_method = HeadingMethod.AIS_COG
+            detection.heading_ambiguity_deg = None
+
+
+def add_ais_warning(detections: list[VesselDetection], warning: str) -> None:
+    for detection in detections:
+        detection.metadata = {**detection.metadata, "ais_warning": warning}
+
+
+def ais_track_points(
+    ais_df,
+    mmsi: str,
+    acquisition_time,
+    window_min: int,
+    max_points: int,
+) -> list[dict[str, object]]:
+    try:
+        import pandas as pd
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError("pandas is required for AIS track extraction") from exc
+
+    center = pd.Timestamp(acquisition_time)
+    if center.tzinfo is None:
+        center = center.tz_localize("UTC")
+    start = center - pd.Timedelta(minutes=window_min)
+    end = center + pd.Timedelta(minutes=window_min)
+    frame = ais_df[(ais_df["mmsi"].astype(str) == str(mmsi)) & (ais_df["time"] >= start) & (ais_df["time"] <= end)]
+    if frame.empty:
+        return []
+    if len(frame) > max_points:
+        step = max(1, int(math.ceil(len(frame) / max_points)))
+        frame = frame.iloc[::step]
+    points: list[dict[str, object]] = []
+    for _, row in frame.sort_values("time").iterrows():
+        sog = row.get("sog_knots")
+        cog = row.get("cog_deg")
+        points.append(
+            {
+                "time": row["time"].isoformat(),
+                "lon": float(row["lon"]),
+                "lat": float(row["lat"]),
+                "sog_knots": None if sog != sog else float(sog),
+                "cog_deg": None if cog != cog else float(cog),
+            }
+        )
+    return points
 
 
 def enrich_detections_with_wakes(
@@ -234,6 +371,13 @@ def write_report_json(
             "guard_window_px": guard_window_px,
             "land_mask_geojson": str(land_mask_geojson) if land_mask_geojson else None,
             "shoreline_buffer_m": shoreline_buffer_m,
+        },
+        "ais_enrichment": {
+            "enabled": bool(os.getenv("MARINE_TRACK_AIS_CSV", "").strip()),
+            "csv": os.getenv("MARINE_TRACK_AIS_CSV", "").strip() or None,
+            "match_window_min": env_int("MARINE_TRACK_AIS_MATCH_WINDOW_MIN", 30, 1, 24 * 60),
+            "track_window_min": env_int("MARINE_TRACK_AIS_TRACK_WINDOW_MIN", 60, 1, 24 * 60),
+            "max_distance_m": env_float("MARINE_TRACK_AIS_MAX_DISTANCE_M", 3000.0, 1.0, 100_000.0),
         },
         "detections_count": len(detections),
         "crop_count": len(crop_pngs),
