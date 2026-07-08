@@ -35,6 +35,9 @@ def render_overview(
     if scale != 1.0:
         canvas = cv2.resize(canvas, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
+    for detection in detections:
+        draw_ais_track(canvas, detection, transform, crs, scale)
+
     for index, detection in enumerate(detections, start=1):
         row, col = lonlat_to_pixel(detection.lon, detection.lat, transform, crs)
         x = int(round(col * scale))
@@ -82,6 +85,33 @@ def draw_detection_marker(canvas: np.ndarray, x: int, y: int, index: int, confid
         2,
         cv2.LINE_AA,
     )
+
+
+def draw_ais_track(canvas: np.ndarray, detection: VesselDetection, transform, crs, scale: float) -> None:
+    ais = detection.metadata.get("ais")
+    if not isinstance(ais, dict):
+        return
+    track = ais.get("track")
+    if not isinstance(track, list) or len(track) < 2:
+        return
+    points: list[tuple[int, int]] = []
+    for point in track:
+        if not isinstance(point, dict):
+            continue
+        try:
+            row, col = lonlat_to_pixel(float(point["lon"]), float(point["lat"]), transform, crs)
+        except Exception:
+            continue
+        x = int(round(col * scale))
+        y = int(round(row * scale))
+        if -50 <= x <= canvas.shape[1] + 50 and -50 <= y <= canvas.shape[0] + 50:
+            points.append((x, y))
+    if len(points) < 2:
+        return
+    cv2.polylines(canvas, [np.array(points, dtype=np.int32)], False, (0, 180, 255), 2, cv2.LINE_AA)
+    mmsi = ais.get("match", {}).get("mmsi") if isinstance(ais.get("match"), dict) else None
+    if mmsi:
+        cv2.putText(canvas, f"AIS {mmsi}", points[-1], cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 180, 255), 1, cv2.LINE_AA)
 
 
 def draw_title(canvas: np.ndarray, title: str, count: int) -> None:
