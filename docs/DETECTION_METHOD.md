@@ -69,14 +69,33 @@ Land/shoreline mask и AIS track не являются входными спут
 
 ## Как рассчитывается скорость
 
-Собственная скорость по спутниковому снимку пока не рассчитывается надежно. Сейчас есть два источника:
+Есть два источника скорости.
 
-1. AIS SOG, если найдено соответствие detection ↔ AIS. Тогда:
+1. AIS SOG, если найдено соответствие detection ↔ AIS. Это приоритетный внешний reference:
    - `speed_knots = ais_sog_knots`;
    - `speed_method = ais_sog`;
    - `speed_reference = ais:<mmsi>`.
 
-2. Wake axis дает направление оси следа, но не скорость. Kelvin/wake-speed estimation оставлен отдельным backlog-пунктом, потому что требует измерения wavelength/периодичности следа и контроля условий съемки.
+2. Экспериментальная оценка по wake wavelength, если AIS отсутствует и вокруг цели найден wake axis:
+   - в crop строится профиль яркости поперек wake axis;
+   - в профиле ищутся повторяющиеся гребни/пики;
+   - медианное расстояние между пиками считается wavelength_px;
+   - wavelength_px переводится в wavelength_m через локальный pixel scale;
+   - скорость оценивается по deep-water Kelvin approximation:
+
+```text
+V = sqrt(g * wavelength_m / (2*pi))
+```
+
+Результат записывается как:
+
+```text
+speed_method = kelvin_wavelength
+speed_reference = wake_wavelength_experimental
+metadata.wake.wavelength.experimental = true
+```
+
+Ограничение: это speed through water / proxy-feature, а не гарантированная speed over ground. AIS SOG, если доступен, перезаписывает экспериментальную оценку.
 
 ## Как рассчитывается масштаб
 
@@ -96,12 +115,12 @@ haversine distances → x_m, y_m
 - Нет multi-band Sentinel-2 stack B02/B03/B04/B08.
 - Нет SCL/cloud/water mask для Sentinel-2.
 - ASF ZIP/GRD не обрабатывается как GeoTIFF.
-- Wake speed по Kelvin wavelength пока не реализован.
+- Wake speed является experimental proxy и требует валидации по AIS/натурным данным.
 - Detector рассчитан на bright compact targets; темные цели, сложные sea clutter и port clutter требуют отдельного режима.
 
 ## Следующие улучшения
 
 1. Lock-файлы для raster cache, чтобы параллельные запросы не скачивали один asset одновременно.
-2. Wake wavelength extraction и экспериментальная speed estimation.
+2. Валидация wake-speed по AIS и флаги качества.
 3. Sentinel-2 band stack + water/cloud mask.
 4. Отдельные detector presets для SAR/open sea, nearshore и optical scenes.
