@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.ndimage import gaussian_filter1d, map_coordinates
+from scipy.signal import find_peaks
 from skimage.feature import canny
 from skimage.transform import hough_line, hough_line_peaks
 
@@ -24,6 +26,15 @@ class WakeAssociation:
     score: float
 
 
+@dataclass(frozen=True)
+class WakeWavelengthEstimate:
+    wavelength_px: float
+    peak_count: int
+    profile_length_px: int
+    prominence: float
+    confidence: float
+
+
 def detect_linear_wake_candidates(
     image: np.ndarray,
     sigma: float = 2.0,
@@ -41,13 +52,7 @@ def detect_linear_wake_candidates(
     if not finite.any():
         return []
 
-    work = np.zeros_like(image, dtype=float)
-    values = image[finite]
-    span = values.max() - values.min()
-    if span == 0:
-        return []
-    work[finite] = (image[finite] - values.min()) / span
-
+    work = normalize_image(image)
     edges = canny(work, sigma=sigma)
     if not edges.any():
         return []
@@ -104,3 +109,80 @@ def hough_line_distance_px(line: WakeLine, vessel_x: float, vessel_y: float) -> 
     normal_angle_rad = np.radians(line.angle_deg - 90.0)
     projected_distance = vessel_x * np.cos(normal_angle_rad) + vessel_y * np.sin(normal_angle_rad)
     return float(abs(projected_distance - line.distance_px))
+
+
+def estimate_wake_wavelength_px(
+    image: np.ndarray,
+    vessel_yx: tuple[float, float],
+    axis_angle_deg: float,
+    half_length_px: int = 96,
+    center_guard_px: int = 8,
+    min_peak_distance_px: int = 4,
+    min_peaks: int = 3,
+) -> WakeWavelengthEstimate | None:
+    """Estimate a tentative wake wavelength from a cross-axis intensity profile.
+
+    The estimate is experimental. It samples a profile perpendicular to the detected
+    wake axis, smooths it, finds repeated bright ridges and returns the median peak
+    spacing in pixels. This is suitable as a weak scientific feature, not as a final
+    speed-over-ground product.
+    """
+    if image.ndim != 2:
+        raise ValueError("image must be 2D")
+    finite = np.isfinite(image)
+    if not finite.any():
+        return None
+    work = normalize_image(image)
+    vessel_y, vessel_x = vessel_yx
+    normal_rad = np.radians(axis_angle_deg + 90.0)
+    offsets = np.arange(-half_length_px, half_length_px + 1, dtype="float64")
+    rows = vessel_y + np.sin(normal_rad) * offsets
+    cols = vessel_x + np.cos(normal_rad) * offsets
+    profile = map_coordinates(work, [rows, cols], order=1, mode="nearest")
+    valid = np.isfinite(profile)
+    if not valid.any():
+        return None
+    profile = np.where(valid, profile, float(np.nanmedian(profile[valid])))
+    profile = gaussian_filter1d(profile.astype("float64"), sigma=1.5)
+    profile = profile - float(np.nanmedian(profile))
+    profile[np.abs(offsets) <= center_guard_px] = 0.0
+    positive = profile[profile > 0]
+    if positive.size == 0:
+        return None
+    prominence = max(0.03, float(np.nanpercentile(positive, 75)) * 0.25)
+    peaks, properties = find_peaks(profile, distance=min_peak_distance_px, prominence=prominence)
+    if len(peaks) < min_peaks:
+        return None
+    peak_offsets = offsets[peaks]
+    spacings = np.diff(np.sort(peak_offsets))
+    spacings = spacings[spacings >= min_peak_distance_px]
+    if len(spacings) < max(1, min_peaks - 1):
+        return None
+    wavelength = float(np.median(spacings))
+    if not np.isfinite(wavelength) or wavelength <= 0:
+        return None
+    prominences = properties.get("prominences", np.array([], dtype="float64"))
+    median_prominence = float(np.median(prominences)) if prominences.size else prominence
+    regularity = 1.0 / (1.0 + float(np.std(spacings) / max(wavelength, 1e-6)))
+    strength = min(1.0, median_prominence / max(prominence, 1e-6))
+    confidence = max(0.0, min(1.0, 0.6 * regularity + 0.4 * min(1.0, strength / 3.0)))
+    return WakeWavelengthEstimate(
+        wavelength_px=wavelength,
+        peak_count=int(len(peaks)),
+        profile_length_px=int(len(profile)),
+        prominence=median_prominence,
+        confidence=confidence,
+    )
+
+
+def normalize_image(image: np.ndarray) -> np.ndarray:
+    finite = np.isfinite(image)
+    work = np.zeros_like(image, dtype="float64")
+    if not finite.any():
+        return work
+    values = image[finite]
+    span = values.max() - values.min()
+    if span == 0:
+        return work
+    work[finite] = (image[finite] - values.min()) / span
+    return work
