@@ -3,13 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from marine_track.estimation import LonLat
+from marine_track.estimation import LonLat, haversine_distance_m
 
 
 @dataclass(frozen=True)
 class RasterGeoContext:
     transform: Any
     crs: Any
+
+
+@dataclass(frozen=True)
+class PixelScale:
+    x_m: float
+    y_m: float
+    mean_m: float
+    area_m2: float
 
 
 def pixel_to_lonlat(row: float, col: float, context: RasterGeoContext) -> LonLat:
@@ -46,3 +54,13 @@ def lonlat_to_pixel(lon: float, lat: float, transform: Any, crs: Any) -> tuple[f
         x, y = transformer.transform(lon, lat)
     row, col = rowcol(transform, x, y, op=float)
     return float(row), float(col)
+
+
+def pixel_scale_m(row: float, col: float, context: RasterGeoContext) -> PixelScale:
+    center = pixel_to_lonlat(row, col, context)
+    right = pixel_to_lonlat(row, col + 1.0, context)
+    down = pixel_to_lonlat(row + 1.0, col, context)
+    x_m = haversine_distance_m(center, right)
+    y_m = haversine_distance_m(center, down)
+    mean = (x_m + y_m) / 2.0
+    return PixelScale(x_m=x_m, y_m=y_m, mean_m=mean, area_m2=x_m * y_m)
