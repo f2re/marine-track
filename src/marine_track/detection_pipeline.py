@@ -69,17 +69,24 @@ def run_detection_for_token(
     max_area_px: int = 5000,
     local_window_px: int = 31,
     guard_window_px: int = 5,
+    min_contrast_sigma: float | None = None,
     land_mask_geojson: str | Path | None = None,
     shoreline_buffer_m: float = 0.0,
     progress_callback: ProgressCallback | None = None,
 ) -> DetectionRunResult:
     run_dir = output_dir / "detections" / token
     run_dir.mkdir(parents=True, exist_ok=True)
+    min_contrast_sigma = min_contrast_sigma if min_contrast_sigma is not None else env_float(
+        "MARINE_TRACK_DETECTION_MIN_CONTRAST_SIGMA",
+        0.0,
+        0.0,
+        100.0,
+    )
 
     report_progress(progress_callback, "2/5 materialize · подготовка GeoTIFF/COG")
     materialized = materialize_scene_from_token(token, output_dir)
 
-    report_progress(progress_callback, "3/5 detect · CFAR, land mask, wake axis")
+    report_progress(progress_callback, "3/5 detect · CFAR, scale, shape, wake/AIS")
     detections = detect_candidates_from_raster(
         path=materialized.raster_path,
         satellite=materialized.scene.sensor.value,
@@ -91,6 +98,7 @@ def run_detection_for_token(
         max_area_px=max_area_px,
         local_window_px=local_window_px,
         guard_window_px=guard_window_px,
+        min_contrast_sigma=min_contrast_sigma,
         land_mask_geojson=land_mask_geojson,
         shoreline_buffer_m=shoreline_buffer_m,
     )
@@ -119,6 +127,7 @@ def run_detection_for_token(
         max_area_px=max_area_px,
         local_window_px=local_window_px,
         guard_window_px=guard_window_px,
+        min_contrast_sigma=min_contrast_sigma,
         land_mask_geojson=land_mask_geojson,
         shoreline_buffer_m=shoreline_buffer_m,
     )
@@ -349,6 +358,7 @@ def write_report_json(
     max_area_px: int,
     local_window_px: int,
     guard_window_px: int,
+    min_contrast_sigma: float,
     land_mask_geojson: str | Path | None,
     shoreline_buffer_m: float,
 ) -> Path:
@@ -369,6 +379,8 @@ def write_report_json(
             "max_area_px": max_area_px,
             "local_window_px": local_window_px,
             "guard_window_px": guard_window_px,
+            "min_contrast_sigma": min_contrast_sigma,
+            "confidence_formula": "0.50*peak_score + 0.35*contrast_sigma/8 + 0.15*shape_elongation/5",
             "land_mask_geojson": str(land_mask_geojson) if land_mask_geojson else None,
             "shoreline_buffer_m": shoreline_buffer_m,
         },
