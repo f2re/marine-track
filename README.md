@@ -42,8 +42,9 @@ bash deploy_telegram_bot.sh --providers all
 - TTL-кеш scene-search, чтобы минимизировать STAC/provider API calls.
 - Общий raster cache: один и тот же product/asset/AOI не скачивается повторно.
 - Автоматическая сборка land/shoreline mask из URL или локального ZIP/SHP/GeoJSON.
-- Local-CFAR style detector для bright compact targets.
+- Local-CFAR detector с physical scale, local contrast, shape metrics и confidence provenance.
 - Консервативная wake-axis association вокруг каждого судна через Canny+Hough; heading сохраняется с флагом неоднозначности 180°.
+- Experimental wake speed enrichment: wavelength по cross-axis profile peaks, скорость по deep-water Kelvin approximation, результат помечен experimental.
 - AIS enrichment: ближайший интерполированный AIS track point, MMSI/distance/SOG/COG в validation/metadata, AIS track overlay на overview/crop.
 - Overview PNG с точками/номерами судов, wake axis и AIS track при наличии.
 - Crop PNG по каждому найденному судну, включая wake-axis и AIS-track overlay при наличии.
@@ -53,7 +54,6 @@ bash deploy_telegram_bot.sh --providers all
 
 - Lock-файлы для конкурентного скачивания одного raster asset.
 - Полноценный Sentinel-2 band stack B02/B03/B04/B08 + SCL/cloud/water mask.
-- Speed enrichment из wake geometry.
 - Обработка ASF ZIP/GRD через SNAP/pyroSAR.
 
 ## Установка на сервер
