@@ -11,15 +11,15 @@ from pathlib import Path
 import numpy as np
 
 from marine_track.ais import match_detection_to_ais, read_ais_csv
-from marine_track.estimation import bearing_deg
-from marine_track.geospatial import RasterGeoContext, lonlat_to_pixel, pixel_to_lonlat
+from marine_track.estimation import bearing_deg, speed_from_kelvin_wavelength
+from marine_track.geospatial import RasterGeoContext, lonlat_to_pixel, pixel_scale_m, pixel_to_lonlat
 from marine_track.models import HeadingMethod, SpeedMethod, VesselDetection
 from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.raster_detection import detect_candidates_from_raster
 from marine_track.rendering.overview import render_overview
 from marine_track.rendering.vessel_crop import render_vessel_crop
 from marine_track.scene_materializer import MaterializedScene, materialize_scene_from_token
-from marine_track.wake import associate_wake_axis_with_vessel
+from marine_track.wake import associate_wake_axis_with_vessel, estimate_wake_wavelength_px
 
 ProgressCallback = Callable[[str], None]
 
@@ -305,7 +305,8 @@ def enrich_detections_with_wakes(
             if dataset.nodata is not None:
                 image[image == dataset.nodata] = np.nan
 
-            association = associate_wake_axis_with_vessel(image, vessel_yx=(row - row0, col - col0))
+            local_yx = (row - row0, col - col0)
+            association = associate_wake_axis_with_vessel(image, vessel_yx=local_yx)
             if association is None:
                 continue
 
@@ -319,19 +320,40 @@ def enrich_detections_with_wakes(
             detection.heading_deg = heading
             detection.heading_method = HeadingMethod.WAKE_AXIS
             detection.heading_ambiguity_deg = 180.0
-            detection.metadata = {
-                **detection.metadata,
-                "wake": {
-                    "detector": "canny_hough",
-                    "axis_angle_image_deg": association.line.angle_deg,
-                    "hough_distance_px": association.line.distance_px,
-                    "accumulator": association.line.accumulator,
-                    "line_distance_to_vessel_px": association.line_distance_px,
-                    "score": association.score,
-                    "crop_size_px": crop_size_px,
-                    "heading_ambiguity_deg": 180.0,
-                },
+            wake_payload = {
+                "detector": "canny_hough",
+                "axis_angle_image_deg": association.line.angle_deg,
+                "hough_distance_px": association.line.distance_px,
+                "accumulator": association.line.accumulator,
+                "line_distance_to_vessel_px": association.line_distance_px,
+                "score": association.score,
+                "crop_size_px": crop_size_px,
+                "heading_ambiguity_deg": 180.0,
             }
+            wavelength = estimate_wake_wavelength_px(image, vessel_yx=local_yx, axis_angle_deg=association.line.angle_deg)
+            if wavelength is not None:
+                scale = pixel_scale_m(row, col, context)
+                wavelength_m = wavelength.wavelength_px * scale.mean_m
+                speed_mps, speed_knots = speed_from_kelvin_wavelength(wavelength_m)
+                wake_payload["wavelength"] = {
+                    "method": "cross_axis_profile_peaks",
+                    "experimental": True,
+                    "wavelength_px": wavelength.wavelength_px,
+                    "wavelength_m": wavelength_m,
+                    "peak_count": wavelength.peak_count,
+                    "profile_length_px": wavelength.profile_length_px,
+                    "prominence": wavelength.prominence,
+                    "confidence": wavelength.confidence,
+                    "pixel_scale_mean_m": scale.mean_m,
+                    "speed_mps": speed_mps,
+                    "speed_knots": speed_knots,
+                    "speed_formula": "sqrt(g*wavelength_m/(2*pi))",
+                }
+                if detection.speed_knots is None:
+                    detection.speed_knots = speed_knots
+                    detection.speed_method = SpeedMethod.KELVIN_WAVELENGTH
+                    detection.speed_reference = "wake_wavelength_experimental"
+            detection.metadata = {**detection.metadata, "wake": wake_payload}
 
 
 def image_axis_to_geographic_heading(
@@ -383,6 +405,12 @@ def write_report_json(
             "confidence_formula": "0.50*peak_score + 0.35*contrast_sigma/8 + 0.15*shape_elongation/5",
             "land_mask_geojson": str(land_mask_geojson) if land_mask_geojson else None,
             "shoreline_buffer_m": shoreline_buffer_m,
+        },
+        "wake_speed_enrichment": {
+            "enabled": True,
+            "experimental": True,
+            "method": "cross_axis_profile_peaks + deep_water_kelvin_wavelength",
+            "note": "AIS SOG overrides this value when AIS match is available.",
         },
         "ais_enrichment": {
             "enabled": bool(os.getenv("MARINE_TRACK_AIS_CSV", "").strip()),
