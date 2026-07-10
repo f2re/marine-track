@@ -21,6 +21,11 @@ from marine_track.calibration import (
     rebuild_calibration_profile,
     submit_calibration_answer,
 )
+from marine_track.telegram_calibration_areas import (
+    ACTION_AREA_HOME,
+    CALIBRATION_AREA_ACTIONS,
+    calibration_area_callback,
+)
 from marine_track.telegram_calibration_phase2 import (
     ACTION_OPEN as PHASE2_ACTION_OPEN,
 )
@@ -66,7 +71,8 @@ def calibration_warning_text(profile: dict[str, Any]) -> str:
         f"Размечено: <code>{int(labels.get('usable', 0))}/{int(targets.get('min_labels', 0))}</code>\n"
         f"Судно: <code>{int(labels.get('positive', 0))}/{int(targets.get('min_positive', 0))}</code> · "
         f"ложный кандидат: <code>{int(labels.get('negative', 0))}/{int(targets.get('min_negative', 0))}</code>\n\n"
-        "Начните с candidate-разметки, затем используйте независимые tiles phase 2."
+        "Выберите акваторию: бот найдёт сцену, выполнит детекцию и подготовит candidate-задачи "
+        "и независимые tiles."
     )
 
 
@@ -109,8 +115,9 @@ def calibration_menu_text(profile: dict[str, Any]) -> str:
         f"Неуверенные: <code>{int(labels.get('uncertain', 0))}</code> · "
         f"пропущенные: <code>{int(labels.get('skipped', 0))}</code>"
         f"{coefficient_lines}{metric_line}\n\n"
-        "Candidate-разметка калибрует ranking score. Phase 2 независимо оценивает false alarms "
-        "и пропущенные цели; CFAR и формула скорости автоматически не меняются."
+        "Сначала подготовьте сцены из выбранной акватории. Candidate-разметка калибрует ranking score. "
+        "Phase 2 независимо оценивает false alarms и пропущенные цели; CFAR и формула скорости "
+        "автоматически не меняются."
     )
 
 
@@ -122,6 +129,12 @@ def calibration_menu_markup(profile: dict[str, Any]) -> InlineKeyboardMarkup:
     )
     return InlineKeyboardMarkup(
         [
+            [
+                InlineKeyboardButton(
+                    "🗺 Выбрать акваторию и найти сцены",
+                    callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{ACTION_AREA_HOME}",
+                )
+            ],
             [
                 InlineKeyboardButton(
                     action_label,
@@ -239,6 +252,9 @@ async def calibration_callback(
     if action.startswith("p2"):
         await phase2_callback(update, context, config)
         return
+    if action in CALIBRATION_AREA_ACTIONS:
+        await calibration_area_callback(update, context, config)
+        return
 
     del context
     await query.answer()
@@ -297,7 +313,9 @@ async def send_next_calibration_task(update: Update, config: TelegramBotConfig) 
     if task is None:
         profile = load_calibration_profile(config.output_dir, calibration_targets(config))
         await target.reply_text(
-            "Нет новых candidates. Выполните детекцию новых сцен или перейдите к независимым tiles phase 2.\n\n"
+            "Нет новых candidates: в output_dir ещё нет необработанных candidate-заданий. "
+            "Нажмите <b>Выбрать акваторию и найти сцены</b>; даже при нуле candidates бот создаст "
+            "независимые phase 2 tiles.\n\n"
             + calibration_menu_text(profile),
             parse_mode=ParseMode.HTML,
             reply_markup=calibration_menu_markup(profile),
