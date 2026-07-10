@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import math
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import cv2
 import numpy as np
@@ -31,6 +33,7 @@ VALID_ANSWERS = {str(index) for index in range(1, 10)} | {
     ANSWER_UNCERTAIN,
     ANSWER_SKIP,
 }
+_FCNTL = importlib.import_module("fcntl") if os.name == "posix" else None
 
 
 @dataclass(frozen=True)
@@ -43,23 +46,14 @@ class CalibrationTargets:
 @contextmanager
 def _state_lock(directory: Path) -> Iterator[None]:
     directory.mkdir(parents=True, exist_ok=True)
-    lock_path = directory / ".calibration.lock"
-    with lock_path.open("a+", encoding="utf-8") as lock_file:
-        try:
-            import fcntl
-
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        except ImportError:  # pragma: no cover - non-POSIX development host
-            pass
+    with (directory / ".calibration.lock").open("a+", encoding="utf-8") as lock_file:
+        if _FCNTL is not None:
+            _FCNTL.flock(lock_file.fileno(), _FCNTL.LOCK_EX)
         try:
             yield
         finally:
-            try:
-                import fcntl
-
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-            except ImportError:  # pragma: no cover - non-POSIX development host
-                pass
+            if _FCNTL is not None:
+                _FCNTL.flock(lock_file.fileno(), _FCNTL.LOCK_UN)
 
 
 def calibration_root(output_dir: str | Path) -> Path:
@@ -79,7 +73,7 @@ def tasks_dir(output_dir: str | Path) -> Path:
 
 
 def utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def default_profile(targets: CalibrationTargets | None = None) -> dict[str, Any]:
@@ -106,18 +100,16 @@ def default_profile(targets: CalibrationTargets | None = None) -> dict[str, Any]
             "kind": "heuristic_linear",
             "feature_names": list(FEATURE_NAMES),
             "intercept": 0.0,
-            "coefficients": DEFAULT_WEIGHTS,
+            "coefficients": dict(DEFAULT_WEIGHTS),
             "decision_threshold": 0.5,
             "fitted": False,
+            "active": False,
         },
         "detector_recommendations": {
             "applied_automatically": False,
             "note": "CFAR generation parameters are not identifiable from candidate-only labels.",
         },
-        "metrics": {
-            "scope": "none",
-            "note": "No calibration labels are available.",
-        },
+        "metrics": {"scope": "none", "note": "No calibration labels are available."},
     }
 
 
@@ -144,24 +136,6 @@ def calibration_needed(
     return not bool(load_calibration_profile(output_dir, targets).get("active"))
 
 
-def score_candidate(
-    peak_score: float,
-    contrast_sigma: float,
-    elongation: float,
-    profile: dict[str, Any] | None = None,
-) -> float:
-    features = normalized_features(peak_score, contrast_sigma, elongation)
-    if profile and profile.get("active"):
-        model = profile.get("ranking_model")
-        if isinstance(model, dict) and model.get("kind") == "logistic":
-            coefficients = model.get("coefficients") or {}
-            value = float(model.get("intercept", 0.0))
-            for name in FEATURE_NAMES:
-                value += float(coefficients.get(name, 0.0)) * features[name]
-            return float(_sigmoid(value))
-    return float(sum(DEFAULT_WEIGHTS[name] * features[name] for name in FEATURE_NAMES))
-
-
 def normalized_features(peak_score: float, contrast_sigma: float, elongation: float) -> dict[str, float]:
     return {
         "peak_score": _clamp(float(peak_score), 0.0, 1.0),
@@ -170,26 +144,41 @@ def normalized_features(peak_score: float, contrast_sigma: float, elongation: fl
     }
 
 
+def score_candidate(
+    peak_score: float,
+    contrast_sigma: float,
+    elongation: float,
+    profile: dict[str, Any] | None = None,
+) -> float:
+    features = normalized_features(peak_score, contrast_sigma, elongation)
+    model = profile.get("ranking_model") if profile and profile.get("active") else None
+    if isinstance(model, dict) and model.get("kind") == "logistic":
+        coefficients = model.get("coefficients") or {}
+        value = float(model.get("intercept", 0.0))
+        value += sum(float(coefficients.get(name, 0.0)) * features[name] for name in FEATURE_NAMES)
+        return float(_sigmoid(value))
+    return float(sum(DEFAULT_WEIGHTS[name] * features[name] for name in FEATURE_NAMES))
+
+
 def create_next_calibration_task(
     output_dir: str | Path,
     admin_id: int,
     crop_size_px: int = 768,
 ) -> dict[str, Any] | None:
     output_dir = Path(output_dir)
-    root = calibration_root(output_dir)
-    with _state_lock(root):
+    with _state_lock(calibration_root(output_dir)):
         answered = _answered_candidate_keys(output_dir)
         for candidate in _candidate_records(output_dir):
             if candidate["candidate_key"] in answered:
                 continue
-            task_id = hashlib.sha256(candidate["candidate_key"].encode("utf-8")).hexdigest()[:20]
+            task_id = hashlib.sha256(candidate["candidate_key"].encode()).hexdigest()[:20]
             task_path = tasks_dir(output_dir) / f"{task_id}.json"
             image_path = tasks_dir(output_dir) / f"{task_id}.png"
             if task_path.is_file() and image_path.is_file():
-                task = json.loads(task_path.read_text(encoding="utf-8"))
-                if isinstance(task, dict) and task.get("status") == "open":
+                task = _read_json(task_path)
+                if task.get("status") == "open":
                     return task
-            expected_cell = int(hashlib.sha256(task_id.encode("ascii")).hexdigest()[:8], 16) % 9 + 1
+            expected_cell = int(hashlib.sha256(task_id.encode()).hexdigest()[:8], 16) % 9 + 1
             task = {
                 "schema_version": CALIBRATION_SCHEMA_VERSION,
                 "task_id": task_id,
@@ -219,15 +208,12 @@ def submit_calibration_answer(
     if answer not in VALID_ANSWERS:
         raise ValueError(f"Unsupported calibration answer: {answer}")
     output_dir = Path(output_dir)
-    root = calibration_root(output_dir)
     targets = targets or CalibrationTargets()
-    with _state_lock(root):
+    with _state_lock(calibration_root(output_dir)):
         task_path = tasks_dir(output_dir) / f"{task_id}.json"
         if not task_path.is_file():
             raise FileNotFoundError(f"Calibration task not found: {task_id}")
-        task = json.loads(task_path.read_text(encoding="utf-8"))
-        if not isinstance(task, dict):
-            raise ValueError(f"Invalid calibration task: {task_id}")
+        task = _read_json(task_path)
         if task.get("status") == "answered":
             return {
                 "task": task,
@@ -237,21 +223,12 @@ def submit_calibration_answer(
 
         expected_cell = int(task["expected_cell"])
         selected_cell = int(answer) if answer.isdigit() else None
-        if selected_cell is not None and selected_cell == expected_cell:
-            label = "positive"
-        elif selected_cell is not None:
-            label = "negative_localization"
-        elif answer == ANSWER_NONE:
-            label = "negative"
-        elif answer == ANSWER_UNCERTAIN:
-            label = "uncertain"
-        else:
-            label = "skipped"
-
+        label = _answer_label(answer, selected_cell, expected_cell)
+        created_at = utc_now()
         record = {
             "schema_version": CALIBRATION_SCHEMA_VERSION,
-            "label_id": hashlib.sha256(f"{task_id}:{admin_id}:{utc_now()}".encode("utf-8")).hexdigest()[:24],
-            "created_at": utc_now(),
+            "label_id": hashlib.sha256(f"{task_id}:{admin_id}:{created_at}".encode()).hexdigest()[:24],
+            "created_at": created_at,
             "admin_id": admin_id,
             "task_id": task_id,
             "candidate_key": task["candidate_key"],
@@ -265,10 +242,7 @@ def submit_calibration_answer(
             "features": task.get("features"),
         }
         _append_jsonl(labels_path(output_dir), record)
-        task["status"] = "answered"
-        task["answered_at"] = record["created_at"]
-        task["answer"] = answer
-        task["label"] = label
+        task.update(status="answered", answered_at=created_at, answer=answer, label=label)
         _atomic_write_json(task_path, task)
         profile = _rebuild_profile_unlocked(output_dir, targets)
         return {"task": task, "record": record, "profile": profile, "duplicate": False}
@@ -302,34 +276,41 @@ def read_calibration_labels(output_dir: str | Path) -> list[dict[str, Any]]:
 def _rebuild_profile_unlocked(output_dir: Path, targets: CalibrationTargets) -> dict[str, Any]:
     records = read_calibration_labels(output_dir)
     positive = [record for record in records if record.get("label") == "positive"]
-    negative = [record for record in records if record.get("label") in {"negative", "negative_localization"}]
-    uncertain = sum(record.get("label") == "uncertain" for record in records)
-    skipped = sum(record.get("label") == "skipped" for record in records)
-    corrections = sum(record.get("label") == "negative_localization" for record in records)
+    negative = [
+        record
+        for record in records
+        if record.get("label") in {"negative", "negative_localization"}
+    ]
     usable = positive + negative
-
     ready = (
         len(usable) >= targets.min_labels
         and len(positive) >= targets.min_positive
         and len(negative) >= targets.min_negative
     )
     profile = default_profile(targets)
-    profile["updated_at"] = utc_now()
-    profile["status"] = "ready" if ready else "collecting" if records else "not_started"
-    profile["active"] = ready
+    profile.update(
+        status="ready" if ready else "collecting" if records else "not_started",
+        active=ready,
+        updated_at=utc_now(),
+    )
     profile["labels"] = {
         "usable": len(usable),
         "positive": len(positive),
         "negative": len(negative),
-        "uncertain": uncertain,
-        "skipped": skipped,
-        "localization_corrections": corrections,
+        "uncertain": sum(record.get("label") == "uncertain" for record in records),
+        "skipped": sum(record.get("label") == "skipped" for record in records),
+        "localization_corrections": sum(
+            record.get("label") == "negative_localization" for record in records
+        ),
     }
 
     if positive and negative:
         x, y = _training_arrays(positive, negative)
         intercept, coefficients = _fit_logistic(x, y)
-        scores = np.asarray([_sigmoid(intercept + float(row @ coefficients)) for row in x], dtype=float)
+        scores = np.asarray(
+            [_sigmoid(intercept + float(row @ coefficients)) for row in x],
+            dtype=float,
+        )
         threshold, metrics = _select_threshold(scores, y)
         profile["ranking_model"] = {
             "kind": "logistic",
@@ -345,7 +326,7 @@ def _rebuild_profile_unlocked(output_dir: Path, targets: CalibrationTargets) -> 
         profile["metrics"] = {
             "scope": "in_sample_training_only",
             **metrics,
-            "note": "Operational probability is not claimed; a fixed validation/test split is still required.",
+            "note": "Operational probability is not claimed; a fixed validation/test split is required.",
         }
         profile["detector_recommendations"] = _detector_recommendations(positive)
     else:
@@ -355,14 +336,22 @@ def _rebuild_profile_unlocked(output_dir: Path, targets: CalibrationTargets) -> 
         }
 
     profile["profile_id"] = hashlib.sha256(
-        json.dumps(
-            [record.get("label_id") for record in records],
-            ensure_ascii=True,
-            sort_keys=True,
-        ).encode("utf-8")
+        json.dumps([record.get("label_id") for record in records], sort_keys=True).encode()
     ).hexdigest()[:16]
     _atomic_write_json(profile_path(output_dir), profile)
     return profile
+
+
+def _answer_label(answer: str, selected_cell: int | None, expected_cell: int) -> str:
+    if selected_cell == expected_cell:
+        return "positive"
+    if selected_cell is not None:
+        return "negative_localization"
+    if answer == ANSWER_NONE:
+        return "negative"
+    if answer == ANSWER_UNCERTAIN:
+        return "uncertain"
+    return "skipped"
 
 
 def _training_arrays(
@@ -373,13 +362,13 @@ def _training_arrays(
     labels: list[float] = []
     for label, records in ((1.0, positive), (0.0, negative)):
         for record in records:
-            features = record.get("features") or {}
-            normalized = normalized_features(
-                float(features.get("peak_score", 0.0)),
-                float(features.get("contrast_sigma", 0.0)),
-                float(features.get("elongation", 1.0)),
+            raw = record.get("features") or {}
+            features = normalized_features(
+                float(raw.get("peak_score", 0.0)),
+                float(raw.get("contrast_sigma", 0.0)),
+                float(raw.get("elongation", 1.0)),
             )
-            rows.append([normalized[name] for name in FEATURE_NAMES])
+            rows.append([features[name] for name in FEATURE_NAMES])
             labels.append(label)
     return np.asarray(rows, dtype=float), np.asarray(labels, dtype=float)
 
@@ -394,22 +383,19 @@ def _fit_logistic(x: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray]:
         len(y) / (2.0 * positive_count),
         len(y) / (2.0 * negative_count),
     )
-    learning_rate = 0.20
-    regularization = 0.03
     for _ in range(600):
-        logits = np.clip(intercept + x @ weights, -30.0, 30.0)
-        probabilities = 1.0 / (1.0 + np.exp(-logits))
+        probabilities = 1.0 / (1.0 + np.exp(-np.clip(intercept + x @ weights, -30.0, 30.0)))
         errors = (probabilities - y) * sample_weights
-        gradient_weights = x.T @ errors / len(y) + regularization * weights
-        gradient_intercept = float(np.mean(errors))
-        weights -= learning_rate * gradient_weights
-        intercept -= learning_rate * gradient_intercept
+        weights -= 0.20 * (x.T @ errors / len(y) + 0.03 * weights)
+        intercept -= 0.20 * float(np.mean(errors))
     return intercept, weights
 
 
 def _select_threshold(scores: np.ndarray, y: np.ndarray) -> tuple[float, dict[str, float]]:
     candidates = sorted({0.25, 0.5, 0.75, *(float(value) for value in scores)})
-    best: tuple[float, float, dict[str, float]] | None = None
+    best_objective = -1.0
+    best_threshold = 0.5
+    best_metrics: dict[str, float] = {}
     for threshold in candidates:
         predicted = scores >= threshold
         true_positive = int(np.sum(predicted & (y == 1.0)))
@@ -421,44 +407,43 @@ def _select_threshold(scores: np.ndarray, y: np.ndarray) -> tuple[float, dict[st
         f1 = 2.0 * precision * recall / max(1e-12, precision + recall)
         specificity = true_negative / max(1, true_negative + false_positive)
         balanced_accuracy = 0.5 * (recall + specificity)
-        metrics = {
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "specificity": specificity,
-            "balanced_accuracy": balanced_accuracy,
-            "accuracy": (true_positive + true_negative) / max(1, len(y)),
-        }
         objective = 0.65 * f1 + 0.35 * balanced_accuracy
-        candidate = (objective, threshold, metrics)
-        if best is None or candidate[0] > best[0] or (
-            math.isclose(candidate[0], best[0]) and candidate[1] > best[1]
+        if objective > best_objective or (
+            math.isclose(objective, best_objective) and threshold > best_threshold
         ):
-            best = candidate
-    assert best is not None
-    return best[1], best[2]
+            best_objective = objective
+            best_threshold = threshold
+            best_metrics = {
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "specificity": specificity,
+                "balanced_accuracy": balanced_accuracy,
+                "accuracy": (true_positive + true_negative) / max(1, len(y)),
+            }
+    return best_threshold, best_metrics
 
 
 def _detector_recommendations(positive: list[dict[str, Any]]) -> dict[str, Any]:
     contrast = np.asarray(
-        [float((record.get("features") or {}).get("contrast_sigma", 0.0)) for record in positive],
-        dtype=float,
+        [float((record.get("features") or {}).get("contrast_sigma", 0.0)) for record in positive]
     )
     area = np.asarray(
-        [float((record.get("features") or {}).get("area_px", 0.0)) for record in positive],
-        dtype=float,
+        [float((record.get("features") or {}).get("area_px", 0.0)) for record in positive]
     )
     return {
         "applied_automatically": False,
         "min_contrast_sigma": float(max(0.0, np.percentile(contrast, 10) * 0.75)),
         "min_area_px": int(max(1, math.floor(np.percentile(area, 5)))) if np.any(area > 0) else 1,
-        "max_area_px": int(max(2, math.ceil(np.percentile(area, 95) * 1.5))) if np.any(area > 0) else 5000,
+        "max_area_px": int(max(2, math.ceil(np.percentile(area, 95) * 1.5)))
+        if np.any(area > 0)
+        else 5000,
         "threshold_sigma": None,
         "local_window_px": None,
         "guard_window_px": None,
         "note": (
-            "Candidate-only labels can tune ranking and post-filter recommendations, "
-            "but cannot identify missed targets below the current CFAR threshold."
+            "Candidate-only labels tune ranking and post-filter recommendations, but cannot "
+            "identify missed targets below the current CFAR threshold."
         ),
     }
 
@@ -468,16 +453,12 @@ def _candidate_records(output_dir: Path) -> Iterator[dict[str, Any]]:
     reports.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     for report_path in reports:
         try:
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(report, dict):
+            report = _read_json(report_path)
+        except (OSError, ValueError):
             continue
         raster_path = Path(str(report.get("raster_path") or ""))
-        if not raster_path.is_file():
-            continue
         detections = report.get("detections") or []
-        if not isinstance(detections, list):
+        if not raster_path.is_file() or not isinstance(detections, list):
             continue
         for detection in detections:
             if not isinstance(detection, dict):
@@ -486,9 +467,9 @@ def _candidate_records(output_dir: Path) -> Iterator[dict[str, Any]]:
             if not isinstance(metadata, dict):
                 metadata = {}
             detection_id = str(detection.get("detection_id") or "")
-            candidate_key = f"{report.get('product_id')}:{detection_id}"
+            wake = metadata.get("wake")
             yield {
-                "candidate_key": candidate_key,
+                "candidate_key": f"{report.get('product_id')}:{detection_id}",
                 "source": {
                     "report_path": str(report_path),
                     "raster_path": str(raster_path),
@@ -511,9 +492,7 @@ def _candidate_records(output_dir: Path) -> Iterator[dict[str, Any]]:
                     "area_px": metadata.get("area_px", 0.0),
                     "major_axis_px": metadata.get("major_axis_px", 0.0),
                     "minor_axis_px": metadata.get("minor_axis_px", 0.0),
-                    "wake_score": (metadata.get("wake") or {}).get("score")
-                    if isinstance(metadata.get("wake"), dict)
-                    else None,
+                    "wake_score": wake.get("score") if isinstance(wake, dict) else None,
                     "ais_matched": detection.get("validation_status") == "ais_matched",
                 },
             }
@@ -535,8 +514,7 @@ def _render_grid_task(
     crop_size_px -= crop_size_px % 3
     source = candidate["source"]
     detection = candidate["candidate"]
-    raster_path = Path(source["raster_path"])
-    with rasterio.open(raster_path) as dataset:
+    with rasterio.open(Path(source["raster_path"])) as dataset:
         row, col = lonlat_to_pixel(
             float(detection["lon"]),
             float(detection["lat"]),
@@ -544,8 +522,7 @@ def _render_grid_task(
             dataset.crs,
         )
         cell_size = crop_size_px // 3
-        cell_row = (expected_cell - 1) // 3
-        cell_col = (expected_cell - 1) % 3
+        cell_row, cell_col = divmod(expected_cell - 1, 3)
         desired_y = cell_row * cell_size + cell_size // 2
         desired_x = cell_col * cell_size + cell_size // 2
         row0 = int(round(row - desired_y))
@@ -571,17 +548,16 @@ def _render_grid_task(
 def _draw_grid(canvas: np.ndarray) -> None:
     height, width = canvas.shape[:2]
     for index in (1, 2):
-        x = int(round(width * index / 3.0))
-        y = int(round(height * index / 3.0))
+        x = round(width * index / 3)
+        y = round(height * index / 3)
         cv2.line(canvas, (x, 0), (x, height - 1), (0, 0, 0), 5, cv2.LINE_AA)
         cv2.line(canvas, (x, 0), (x, height - 1), (255, 255, 255), 2, cv2.LINE_AA)
         cv2.line(canvas, (0, y), (width - 1, y), (0, 0, 0), 5, cv2.LINE_AA)
         cv2.line(canvas, (0, y), (width - 1, y), (255, 255, 255), 2, cv2.LINE_AA)
     for cell in range(1, 10):
-        row = (cell - 1) // 3
-        col = (cell - 1) % 3
-        x = int(col * width / 3.0) + 12
-        y = int(row * height / 3.0) + 34
+        row, col = divmod(cell - 1, 3)
+        x = round(col * width / 3) + 12
+        y = round(row * height / 3) + 34
         cv2.rectangle(canvas, (x - 7, y - 27), (x + 38, y + 9), (0, 0, 0), -1)
         cv2.putText(
             canvas,
@@ -597,10 +573,17 @@ def _draw_grid(canvas: np.ndarray) -> None:
 
 def _answered_candidate_keys(output_dir: Path) -> set[str]:
     return {
-        str(record.get("candidate_key"))
+        str(record["candidate_key"])
         for record in read_calibration_labels(output_dir)
         if record.get("candidate_key")
     }
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected JSON object: {path}")
+    return payload
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -614,7 +597,10 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     os.replace(temporary, path)
 
 
