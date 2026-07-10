@@ -1,0 +1,49 @@
+name: Finalize CFAR tiling and limits
+
+on:
+  push:
+    branches:
+      - agent/guard-cfar-tiled-limits-20260710
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/guard-cfar-tiled-limits-20260710
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Merge current main and apply focused finalization
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          git merge --no-edit origin/main
+          python scripts/agent_finalize_cfar_tiling.py
+      - name: Install and validate
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+          ruff check --fix src tests runtime_check.py
+          python -m compileall -q src runtime_check.py
+          bash -n install_telegram_bot.sh deploy_telegram_bot.sh
+          ruff check src tests runtime_check.py
+          pytest -q
+      - name: Commit tested implementation
+        run: |
+          rm -f scripts/agent_finalize_cfar_tiling.py
+          rm -f .github/workflows/agent-finalize-cfar-tiling.yml
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No finalization changes found.' >&2
+            exit 1
+          fi
+          git commit -m 'Finalize guard-cell CFAR, tiled inference and limits'
+          git push origin HEAD:agent/guard-cfar-tiled-limits-20260710
