@@ -18,6 +18,7 @@ from marine_track.resource_limits import (
     ResourceLimitError,
     ResourceLimits,
     estimated_tile_count,
+    load_resource_limits,
     validate_geojson_payload,
     validate_raster_workload,
 )
@@ -152,7 +153,9 @@ def test_tiled_detection_emits_boundary_candidate_once(tmp_path):
 def test_resource_limits_validate_coordinates_topology_area_and_workload():
     small = {
         "type": "Polygon",
-        "coordinates": [[[30.0, 43.0], [30.1, 43.0], [30.1, 43.1], [30.0, 43.1], [30.0, 43.0]]],
+        "coordinates": [
+            [[30.0, 43.0], [30.1, 43.0], [30.1, 43.1], [30.0, 43.1], [30.0, 43.0]]
+        ],
     }
     metrics = validate_geojson_payload(small)
     assert 0.0 < metrics.area_km2 < 1_000.0
@@ -187,6 +190,46 @@ def test_resource_limits_validate_coordinates_topology_area_and_workload():
             8,
             ResourceLimits(max_raster_pixels=1_000),
         )
+
+
+def test_resource_limits_use_yaml_baseline_then_environment_override(tmp_path, monkeypatch):
+    config = tmp_path / "processing.yaml"
+    config.write_text(
+        """
+resource_limits:
+  max_aoi_area_km2: 4321
+  max_aoi_vertices: 321
+  max_raster_pixels: 7654321
+  max_tiles: 654
+  max_candidates: 543
+""".lstrip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MARINE_TRACK_PROCESSING_CONFIG", str(config))
+
+    baseline = load_resource_limits()
+    assert baseline == ResourceLimits(
+        max_aoi_area_km2=4321.0,
+        max_aoi_vertices=321,
+        max_raster_pixels=7_654_321,
+        max_tiles=654,
+        max_candidates=543,
+    )
+
+    monkeypatch.setenv("MARINE_TRACK_MAX_AOI_AREA_KM2", "1234")
+    monkeypatch.setenv("MARINE_TRACK_MAX_TILES", "42")
+    overridden = load_resource_limits()
+    assert overridden.max_aoi_area_km2 == pytest.approx(1234.0)
+    assert overridden.max_tiles == 42
+    assert overridden.max_aoi_vertices == 321
+
+
+def test_resource_limits_reject_malformed_present_processing_config(tmp_path, monkeypatch):
+    config = tmp_path / "processing.yaml"
+    config.write_text("resource_limits: []\n", encoding="utf-8")
+    monkeypatch.setenv("MARINE_TRACK_PROCESSING_CONFIG", str(config))
+    with pytest.raises(ResourceLimitError, match="resource_limits must be a mapping"):
+        load_resource_limits()
 
 
 def test_all_builtin_calibration_sectors_fit_default_aoi_limit():
