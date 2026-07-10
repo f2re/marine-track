@@ -22,6 +22,25 @@ def test_deploy_is_atomic_non_editable_and_has_rollback():
     assert ".staging-" in text
 
 
+def test_deploy_reconciles_and_safely_loads_canonical_environment():
+    text = (ROOT / "deploy_telegram_bot.sh").read_text(encoding="utf-8")
+    assert "/etc/marine-track/marine-track.env" in text
+    assert "scripts/merge_env_file.py" in text
+    assert "--legacy \"$LEGACY_ENV\"" in text
+    assert "while IFS= read -r raw || [[ -n \"$raw\" ]]" in text
+    assert 'source "$ENV_FILE"' not in text
+    assert 'export "$key=$value"' in text
+
+
+def test_install_reconciles_existing_legacy_and_canonical_environment():
+    text = (ROOT / "install_telegram_bot.sh").read_text(encoding="utf-8")
+    assert "scripts/merge_env_file.py" in text
+    assert "reconciled $LEGACY_ENV with canonical environment file" in text
+    assert 'MARINE_TRACK_ENV_FILE="$ENV_FILE"' in text
+    assert 'MARINE_TRACK_OUTPUT_DIR=$STATE_DIR/output' in text
+    assert 'MARINE_TRACK_CACHE_DIR=$CACHE_DIR' in text
+
+
 def test_systemd_unit_uses_immutable_current_and_shared_writable_dirs():
     text = (ROOT / "ops" / "marine-track.service").read_text(encoding="utf-8")
     assert "WorkingDirectory=/opt/marine_track/current" in text
@@ -30,3 +49,5 @@ def test_systemd_unit_uses_immutable_current_and_shared_writable_dirs():
     assert "StateDirectory=marine-track" in text
     assert "CacheDirectory=marine-track" in text
     assert "User=marine-track" in text
+    assert "Environment=MARINE_TRACK_ENV_FILE=/etc/marine-track/marine-track.env" in text
+    assert "EnvironmentFile=/etc/marine-track/marine-track.env" in text
