@@ -98,8 +98,8 @@ def detect_candidates_from_raster(
                 provider=provider,
                 product_id=product_id,
                 acquisition_time=acquisition_time,
-                confidence=ranking_score,
-                wake_type="ship_candidate",
+                ranking_score=ranking_score,
+                wake_type="vessel_candidate",
                 metadata={
                     "area_px": candidate.area_px,
                     "area_m2": area_m2,

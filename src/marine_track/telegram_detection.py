@@ -66,22 +66,33 @@ def make_progress_callback(loop: asyncio.AbstractEventLoop, status: Message):
     return callback
 
 
-async def detect_command(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
+async def detect_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    config: TelegramBotConfig,
+) -> None:
     message = update.effective_message
     if not message:
         return
     args = list(context.args or [])
     if not args:
         await message.reply_text(
-            "Формат: /detect <token>. Проще: нажмите 🔎 у найденной сцены или используйте /detectbbox.",
+            "Формат: /detect <token>. Проще: нажмите 🔎 у сцены или используйте /detectbbox.",
             reply_markup=menu_for_user(update, config),
         )
         return
     await send_detection_by_token(update, args[0].strip(), config)
 
 
-async def detect_default_aoi(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
-    target = update.effective_message or (update.callback_query.message if update.callback_query else None)
+async def detect_default_aoi(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    config: TelegramBotConfig,
+) -> None:
+    del context
+    target = update.effective_message or (
+        update.callback_query.message if update.callback_query else None
+    )
     if not target:
         return
     if not config.default_aoi.is_file():
@@ -123,23 +134,28 @@ async def detect_default_aoi(update: Update, context: ContextTypes.DEFAULT_TYPE,
             aoi_geojson=aoi_geojson,
         )
     except Exception as exc:
-        await status.edit_text(f"Не удалось найти сцену для детекции: {exc}")
+        await status.edit_text(f"Не удалось найти сцену для candidate detection: {exc}")
         return
     if not tokens:
-        await status.edit_text("Нет сцен с GeoTIFF/COG assets для детекции.")
+        await status.edit_text("Нет сцен с GeoTIFF/COG assets для candidate detection.")
         return
     scene = result.scenes[0]
     cache_status = "hit" if result.cache_hit else "refresh"
     await status.edit_text(
         progress_text(
             "1/5 search · сцена выбрана",
-            f"provider={result.provider}\nsensor={result.sensor.value}\nsearch_cache={cache_status}\ntime={scene.acquisition_time.isoformat()}",
+            f"provider={result.provider}\nsensor={result.sensor.value}\n"
+            f"search_cache={cache_status}\ntime={scene.acquisition_time.isoformat()}",
         )
     )
     await send_detection_by_token(update, tokens[0], config)
 
 
-async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
+async def detect_bbox_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    config: TelegramBotConfig,
+) -> None:
     message = update.effective_message
     if not message:
         return
@@ -207,7 +223,7 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         aoi_path.unlink(missing_ok=True)
 
     if not tokens:
-        await status.edit_text("Не найдено сцен с GeoTIFF/COG assets для детекции.")
+        await status.edit_text("Не найдено сцен с GeoTIFF/COG assets для candidate detection.")
         return
     token = tokens[0]
     first_scene = result.scenes[0]
@@ -215,13 +231,19 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await status.edit_text(
         progress_text(
             "1/5 search · сцена выбрана",
-            f"provider={result.provider}\nsensor={result.sensor.value}\nsearch_cache={search_cache_status}\ntime={first_scene.acquisition_time.isoformat()}",
+            f"provider={result.provider}\nsensor={result.sensor.value}\n"
+            f"search_cache={search_cache_status}\ntime={first_scene.acquisition_time.isoformat()}",
         )
     )
     await send_detection_by_token(update, token, config)
 
 
-async def detect_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, config: TelegramBotConfig) -> None:
+async def detect_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    config: TelegramBotConfig,
+) -> None:
+    del context
     query = update.callback_query
     if not query or not query.data:
         return
@@ -231,7 +253,11 @@ async def detect_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, co
     await send_detection_by_token(update, token, config)
 
 
-async def send_detection_by_token(update: Update, token: str, config: TelegramBotConfig) -> None:
+async def send_detection_by_token(
+    update: Update,
+    token: str,
+    config: TelegramBotConfig,
+) -> None:
     target = update.effective_message
     query = update.callback_query
     if query:
@@ -263,36 +289,49 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
         )
     except MaterializationError as exc:
         await status.edit_text(
-            "Детекция не запущена: нет full-resolution GeoTIFF/COG asset.\n"
+            "Обработка не запущена: нет full-resolution GeoTIFF/COG asset.\n"
             f"Причина: {exc}\n\n"
-            "Для ASF ZIP/GRD и preview-only сцен это ожидаемо. Используйте /detectbbox или кнопку 🔎 Найти суда.",
+            "Для ASF ZIP/GRD и preview-only сцен это ожидаемо. "
+            "Используйте /detectbbox или кнопку 🔎 Найти кандидаты.",
             reply_markup=menu_for_user(update, config),
         )
         return
     except Exception as exc:
-        await status.edit_text(f"Ошибка детекции: {exc}", reply_markup=menu_for_user(update, config))
+        await status.edit_text(
+            f"Ошибка candidate detection: {exc}",
+            reply_markup=menu_for_user(update, config),
+        )
         return
 
     await status.edit_text(
         progress_text(
             "5/5 send · отправка результатов",
-            f"detections={len(result.detections)}\nвыдача={output_mode_label(output_mode)}",
+            f"candidates={len(result.detections)}\nвыдача={output_mode_label(output_mode)}",
         )
     )
     await send_detection_outputs(target, result, output_mode)
-    await status.edit_text(summary_text(result, output_mode), reply_markup=menu_for_user(update, config))
+    await status.edit_text(
+        summary_text(result, output_mode), reply_markup=menu_for_user(update, config)
+    )
 
 
 def summary_text(result: DetectionRunResult, output_mode: str = OUTPUT_MODE_ALL) -> str:
     scene = result.materialized.scene
     crop_status = "yes" if result.materialized.cropped else "no"
     raster_cache_status = "hit" if result.materialized.cache_hit else "created"
+    ais_references = sum(item.references.ais is not None for item in result.detections)
+    kelvin_proxies = sum(
+        item.research_proxies.kelvin_speed is not None for item in result.detections
+    )
     return (
-        "✅ Детекция завершена\n"
+        "✅ Candidate detection завершена\n"
         f"sensor: {scene.sensor.value}\n"
         f"provider: {result.materialized.provider}\n"
         f"time: {scene.acquisition_time.isoformat()}\n"
-        f"detections: {len(result.detections)}\n"
+        f"vessel_candidates: {len(result.detections)}\n"
+        f"AIS references: {ais_references}\n"
+        f"Kelvin research proxies: {kelvin_proxies}\n"
+        "operational_speed: not_estimated unless explicitly stated\n"
         f"raster_cache: {raster_cache_status}\n"
         f"aoi_crop: {crop_status}\n"
         f"output_mode: {output_mode_label(output_mode)}\n"
@@ -300,11 +339,15 @@ def summary_text(result: DetectionRunResult, output_mode: str = OUTPUT_MODE_ALL)
     )
 
 
-async def send_detection_outputs(target, result: DetectionRunResult, output_mode: str = OUTPUT_MODE_ALL) -> None:
+async def send_detection_outputs(
+    target,
+    result: DetectionRunResult,
+    output_mode: str = OUTPUT_MODE_ALL,
+) -> None:
     if output_mode in {OUTPUT_MODE_ALL, OUTPUT_MODE_IMAGES}:
-        await send_photo_or_document(target, result.overview_png, caption="Обзор: найденные суда")
+        await send_photo_or_document(target, result.overview_png, caption="Обзор кандидатов судов")
         for index, crop in enumerate(result.crop_pngs, start=1):
-            await send_photo_or_document(target, crop, caption=f"Судно #{index}")
+            await send_photo_or_document(target, crop, caption=f"Кандидат #{index}")
     if output_mode in {OUTPUT_MODE_ALL, OUTPUT_MODE_FILES}:
         for path in (result.geojson, result.csv, result.parquet, result.report_json):
             await send_document(target, path)

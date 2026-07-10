@@ -42,7 +42,7 @@ def render_overview(
         row, col = lonlat_to_pixel(detection.lon, detection.lat, transform, crs)
         x = int(round(col * scale))
         y = int(round(row * scale))
-        draw_detection_marker(canvas, x, y, index, detection.confidence)
+        draw_detection_marker(canvas, x, y, index, detection.ranking_score)
 
     draw_title(canvas, title, len(detections))
     cv2.imwrite(str(output), canvas)
@@ -71,8 +71,8 @@ def resize_scale(width: int, height: int, max_size_px: int) -> float:
     return max_size_px / float(longest)
 
 
-def draw_detection_marker(canvas: np.ndarray, x: int, y: int, index: int, confidence: float) -> None:
-    radius = 8 if confidence < 0.7 else 10
+def draw_detection_marker(canvas: np.ndarray, x: int, y: int, index: int, ranking_score: float) -> None:
+    radius = 8 if ranking_score < 0.7 else 10
     cv2.circle(canvas, (x, y), radius, (0, 0, 255), 2)
     cv2.circle(canvas, (x, y), 2, (0, 255, 255), -1)
     cv2.putText(
@@ -88,14 +88,11 @@ def draw_detection_marker(canvas: np.ndarray, x: int, y: int, index: int, confid
 
 
 def draw_ais_track(canvas: np.ndarray, detection: VesselDetection, transform, crs, scale: float) -> None:
-    ais = detection.metadata.get("ais")
-    if not isinstance(ais, dict):
-        return
-    track = ais.get("track")
-    if not isinstance(track, list) or len(track) < 2:
+    ais = detection.references.ais
+    if ais is None or len(ais.track) < 2:
         return
     points: list[tuple[int, int]] = []
-    for point in track:
+    for point in ais.track:
         if not isinstance(point, dict):
             continue
         try:
@@ -109,13 +106,20 @@ def draw_ais_track(canvas: np.ndarray, detection: VesselDetection, transform, cr
     if len(points) < 2:
         return
     cv2.polylines(canvas, [np.array(points, dtype=np.int32)], False, (0, 180, 255), 2, cv2.LINE_AA)
-    mmsi = ais.get("match", {}).get("mmsi") if isinstance(ais.get("match"), dict) else None
-    if mmsi:
-        cv2.putText(canvas, f"AIS {mmsi}", points[-1], cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 180, 255), 1, cv2.LINE_AA)
+    cv2.putText(
+        canvas,
+        f"AIS ref {ais.mmsi}",
+        points[-1],
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 180, 255),
+        1,
+        cv2.LINE_AA,
+    )
 
 
 def draw_title(canvas: np.ndarray, title: str, count: int) -> None:
-    text = f"{title} | vessels: {count}"
+    text = f"{title} | vessel candidates: {count}"
     cv2.rectangle(canvas, (0, 0), (canvas.shape[1], 36), (0, 0, 0), -1)
     cv2.putText(
         canvas,

@@ -21,7 +21,7 @@ def render_vessel_crop(
     try:
         import rasterio
     except ImportError as exc:  # pragma: no cover - environment dependent
-        raise RuntimeError("rasterio is required for vessel crop rendering") from exc
+        raise RuntimeError("rasterio is required for candidate crop rendering") from exc
 
     output = Path(output_png)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -52,29 +52,53 @@ def render_vessel_crop(
     return output
 
 
+def _format_optional(value: float | None, digits: int = 1) -> str:
+    return "n/a" if value is None else f"{value:.{digits}f}"
+
+
 def draw_crop_overlay(canvas: np.ndarray, x: int, y: int, detection: VesselDetection, index: int) -> None:
     cv2.circle(canvas, (x, y), 12, (0, 0, 255), 2)
     cv2.line(canvas, (x - 18, y), (x + 18, y), (0, 255, 255), 1)
     cv2.line(canvas, (x, y - 18), (x, y + 18), (0, 255, 255), 1)
     draw_wake_axis(canvas, x, y, detection)
-    ais = detection.validation.get("ais")
-    ais_suffix = ""
-    if isinstance(ais, dict):
-        ais_suffix = f" AIS={ais.get('mmsi')} d={float(ais.get('distance_m', 0.0)):.0f}m"
+
+    ais = detection.references.ais
+    ais_line = "AIS reference: none"
+    if ais is not None:
+        ais_line = (
+            f"AIS ref={ais.mmsi} SOG={_format_optional(ais.sog_knots)}kt "
+            f"d={ais.distance_m:.0f}m {ais.status}"
+        )
+    kelvin = detection.research_proxies.kelvin_speed
+    proxy_line = "Kelvin research proxy: none"
+    if kelvin is not None:
+        proxy_line = (
+            f"Kelvin research proxy={kelvin.value_knots:.1f}kt "
+            f"q={_format_optional(kelvin.quality_score, 2)}"
+        )
+    speed_line = (
+        "Operational speed: not estimated"
+        if detection.speed.value_knots is None
+        else f"Operational speed={detection.speed.value_knots:.1f}kt"
+    )
+    heading = "n/a" if detection.heading_deg is None else f"{detection.heading_deg:.1f}"
     lines = [
-        f"#{index} conf={detection.confidence:.2f}{ais_suffix}",
+        f"#{index} vessel candidate score={detection.ranking_score:.2f}",
         f"lon={detection.lon:.5f} lat={detection.lat:.5f}",
-        f"heading={detection.heading_deg if detection.heading_deg is not None else 'n/a'}",
-        f"speed={detection.speed_knots if detection.speed_knots is not None else 'n/a'} kt",
+        f"candidate heading={heading} method={detection.heading_method.value}",
+        speed_line,
+        ais_line,
+        proxy_line,
     ]
-    cv2.rectangle(canvas, (0, 0), (canvas.shape[1], 82), (0, 0, 0), -1)
+    panel_height = 10 + len(lines) * 18
+    cv2.rectangle(canvas, (0, 0), (canvas.shape[1], panel_height), (0, 0, 0), -1)
     for idx, line in enumerate(lines):
         cv2.putText(
             canvas,
             line[:120],
             (8, 20 + idx * 18),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.48,
+            0.44,
             (255, 255, 255),
             1,
             cv2.LINE_AA,
@@ -96,14 +120,11 @@ def draw_wake_axis(canvas: np.ndarray, x: int, y: int, detection: VesselDetectio
 
 
 def draw_ais_track(canvas: np.ndarray, detection: VesselDetection, transform, crs, row0: int, col0: int) -> None:
-    ais = detection.metadata.get("ais")
-    if not isinstance(ais, dict):
-        return
-    track = ais.get("track")
-    if not isinstance(track, list) or len(track) < 2:
+    ais = detection.references.ais
+    if ais is None or len(ais.track) < 2:
         return
     points: list[tuple[int, int]] = []
-    for point in track:
+    for point in ais.track:
         if not isinstance(point, dict):
             continue
         try:

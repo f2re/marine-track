@@ -97,7 +97,7 @@ def run(
 @app.command("detect-raster")
 def detect_raster(
     raster: Path = typer.Option(..., exists=True, readable=True, help="Single-band GeoTIFF path"),
-    output: Path = typer.Option(Path("runs/latest/detections.geojson")),
+    output: Path = typer.Option(Path("runs/latest/candidates.geojson")),
     satellite: Sensor = typer.Option(Sensor.SENTINEL1),
     provider: str = typer.Option("local"),
     product_id: str = typer.Option("local-raster"),

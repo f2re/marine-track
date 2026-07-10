@@ -31,13 +31,20 @@ def test_ais_enrichment_matches_detection_and_extracts_track(tmp_path):
         max_distance_m=5000,
     )
 
-    assert detection.validation_status == "ais_matched"
-    assert detection.validation["ais"]["mmsi"] == "123456789"
-    assert detection.speed_method == SpeedMethod.AIS_SOG
-    assert detection.speed_reference == "ais:123456789"
-    assert detection.heading_method == HeadingMethod.AIS_COG
-    assert detection.metadata["ais"]["match"]["mmsi"] == "123456789"
-    assert len(detection.metadata["ais"]["track"]) == 2
+    assert detection.validation_status == "ais_reference_matched"
+    assert detection.validation["ais_reference"]["not_ground_truth"] is True
+    reference = detection.references.ais
+    assert reference is not None
+    assert reference.mmsi == "123456789"
+    assert reference.sog_knots == 12.0
+    assert reference.cog_deg == 81.0
+    assert len(reference.track) == 2
+    assert reference.not_ground_truth is True
+    assert detection.speed_method == SpeedMethod.NOT_ESTIMATED
+    assert detection.speed_reference is None
+    assert detection.speed_knots is None
+    assert detection.heading_method == HeadingMethod.NOT_ESTIMATED
+    assert detection.heading_deg is None
 
 
 def test_ais_enrichment_missing_csv_is_warning(tmp_path):
@@ -55,4 +62,4 @@ def test_ais_enrichment_missing_csv_is_warning(tmp_path):
     enrich_detections_with_ais([detection], ais_csv=tmp_path / "missing.csv")
 
     assert detection.validation_status == "unvalidated"
-    assert "AIS CSV not found" in detection.metadata["ais_warning"]
+    assert "AIS CSV not found" in detection.metadata["ais_reference_warning"]

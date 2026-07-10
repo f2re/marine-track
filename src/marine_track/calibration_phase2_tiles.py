@@ -141,6 +141,22 @@ def create_next_independent_task(
     return task
 
 
+def _runtime_raster_path(report_path: Path, report: dict[str, Any]) -> Path:
+    runtime_reference = report.get("runtime_state_reference")
+    if isinstance(runtime_reference, str) and runtime_reference:
+        state_path = Path(runtime_reference)
+        if not state_path.is_absolute():
+            state_path = report_path.parents[2] / state_path
+        try:
+            state = read_json(state_path)
+            raster_path = Path(str(state.get("raster_path") or ""))
+            if raster_path.is_file():
+                return raster_path
+        except (OSError, ValueError):
+            pass
+    return Path(str(report.get("raster_path") or ""))
+
+
 def _tasks_from_report(
     report_path: Path,
     targets: Phase2Targets,
@@ -153,7 +169,7 @@ def _tasks_from_report(
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("rasterio is required for phase 2 calibration") from exc
     report = read_json(report_path)
-    raster_path = Path(str(report.get("raster_path") or ""))
+    raster_path = _runtime_raster_path(report_path, report)
     if not raster_path.is_file():
         return []
     contexts = _load_context(context_geojson)
@@ -309,7 +325,7 @@ def _prediction_for_window(
     size: int,
 ) -> dict[str, Any]:
     inside: list[dict[str, Any]] = []
-    for detection in report.get("detections") or []:
+    for detection in report.get("candidates") or report.get("detections") or []:
         if not isinstance(detection, dict):
             continue
         try:
@@ -323,6 +339,7 @@ def _prediction_for_window(
             continue
         if row0 <= row < row0 + size and col0 <= col < col0 + size:
             metadata = detection.get("metadata") if isinstance(detection.get("metadata"), dict) else {}
+            references = detection.get("references") if isinstance(detection.get("references"), dict) else {}
             inside.append(
                 {
                     "detection_id": detection.get("detection_id"),
@@ -330,9 +347,9 @@ def _prediction_for_window(
                     "col": float(col),
                     "lon": detection.get("lon"),
                     "lat": detection.get("lat"),
-                    "ranking_score": detection.get("confidence"),
+                    "ranking_score": detection.get("ranking_score", detection.get("confidence")),
                     "validation_status": detection.get("validation_status"),
-                    "ais": metadata.get("ais"),
+                    "ais": references.get("ais") or metadata.get("ais"),
                 }
             )
     scores = [
@@ -351,7 +368,7 @@ def _reference_quality(prediction: dict[str, Any]) -> dict[str, Any]:
     matched = [
         item
         for item in prediction.get("candidates", [])
-        if item.get("validation_status") == "ais_matched"
+        if str(item.get("validation_status") or "").startswith("ais_reference_")
     ]
     if not matched:
         return {"ais_status": "unavailable", "ground_truth": False}

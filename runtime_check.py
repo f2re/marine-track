@@ -208,6 +208,7 @@ def check_numeric_env() -> list[str]:
     errors: list[str] = []
     float_names = {
         "MARINE_TRACK_AIS_MAX_DISTANCE_M",
+        "MARINE_TRACK_AIS_AMBIGUITY_MARGIN_M",
         "MARINE_TRACK_CALIBRATION_PHASE2_MIN_VALID_FRACTION",
         "MARINE_TRACK_CALIBRATION_PHASE2_MIN_IMPROVEMENT",
         "MARINE_TRACK_DETECTION_THRESHOLD_SIGMA",
@@ -244,6 +245,8 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_AIS_MATCH_WINDOW_MIN",
         "MARINE_TRACK_AIS_TRACK_WINDOW_MIN",
         "MARINE_TRACK_AIS_MAX_DISTANCE_M",
+        "MARINE_TRACK_AIS_MAX_INTERPOLATION_GAP_MIN",
+        "MARINE_TRACK_AIS_AMBIGUITY_MARGIN_M",
     )
     for name in names:
         raw = os.getenv(name)

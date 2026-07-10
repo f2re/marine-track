@@ -30,7 +30,7 @@ def labels(markup):
 def test_main_menu_without_saved_bbox_has_no_area_shortcuts():
     markup = main_menu_markup(has_last_bbox=False, bbox_count=0)
 
-    assert "🔎 Найти суда" in labels(markup)
+    assert "🔎 Найти кандидаты" in labels(markup)
     assert "↻ Повторить район" not in labels(markup)
     assert "📍 Мои районы" not in labels(markup)
 

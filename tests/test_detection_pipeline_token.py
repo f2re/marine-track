@@ -95,6 +95,8 @@ def test_run_detection_for_token_outputs_files(tmp_path):
     assert result.csv.is_file()
     assert result.parquet.is_file()
     assert result.report_json.is_file()
+    assert result.runtime_state_json.is_file()
+    assert result.runtime_state_json.stat().st_mode & 0o777 == 0o600
     assert len(result.detections) >= 1
     assert len(result.crop_pngs) >= 1
     assert result.crop_pngs[0].is_file()

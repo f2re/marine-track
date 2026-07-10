@@ -456,8 +456,8 @@ def _candidate_records(output_dir: Path) -> Iterator[dict[str, Any]]:
             report = _read_json(report_path)
         except (OSError, ValueError):
             continue
-        raster_path = Path(str(report.get("raster_path") or ""))
-        detections = report.get("detections") or []
+        raster_path = _runtime_raster_path(report_path, report)
+        detections = report.get("candidates") or report.get("detections") or []
         if not raster_path.is_file() or not isinstance(detections, list):
             continue
         for detection in detections:
@@ -483,7 +483,7 @@ def _candidate_records(output_dir: Path) -> Iterator[dict[str, Any]]:
                     "detection_id": detection_id,
                     "lon": detection.get("lon"),
                     "lat": detection.get("lat"),
-                    "ranking_score": detection.get("confidence"),
+                    "ranking_score": detection.get("ranking_score", detection.get("confidence")),
                 },
                 "features": {
                     "peak_score": metadata.get("peak_score", 0.0),
@@ -493,9 +493,28 @@ def _candidate_records(output_dir: Path) -> Iterator[dict[str, Any]]:
                     "major_axis_px": metadata.get("major_axis_px", 0.0),
                     "minor_axis_px": metadata.get("minor_axis_px", 0.0),
                     "wake_score": wake.get("score") if isinstance(wake, dict) else None,
-                    "ais_matched": detection.get("validation_status") == "ais_matched",
+                    "ais_matched": str(detection.get("validation_status") or "").startswith(
+                        "ais_reference_"
+                    ),
                 },
             }
+
+
+def _runtime_raster_path(report_path: Path, report: dict[str, Any]) -> Path:
+    runtime_reference = report.get("runtime_state_reference")
+    if isinstance(runtime_reference, str) and runtime_reference:
+        state_path = Path(runtime_reference)
+        if not state_path.is_absolute():
+            state_path = report_path.parents[2] / state_path
+        try:
+            state = _read_json(state_path)
+            raster_path = Path(str(state.get("raster_path") or ""))
+            if raster_path.is_file():
+                return raster_path
+        except (OSError, ValueError):
+            pass
+    legacy = Path(str(report.get("raster_path") or ""))
+    return legacy
 
 
 def _render_grid_task(
