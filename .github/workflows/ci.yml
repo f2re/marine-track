@@ -1,9 +1,9 @@
 name: Finalize atomic release implementation
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/atomic-release-health-20260710
+      - main
 
 permissions:
   contents: write
