@@ -1,0 +1,93 @@
+name: Fix resource limit mapping validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'agent/guard-cfar-tiled-limits-20260710'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/guard-cfar-tiled-limits-20260710
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply fail-closed mapping repairs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          resource = Path('src/marine_track/resource_limits.py')
+          text = resource.read_text(encoding='utf-8')
+          old = '''    configured = payload.get("resource_limits") or {}
+              if not isinstance(configured, dict):
+                  raise ResourceLimitError(f"resource_limits must be a mapping: {resolved}")
+              return configured
+          '''.replace('          ', '')
+          new = '''    configured = payload.get("resource_limits")
+              if configured is None:
+                  return {}
+              if not isinstance(configured, dict):
+                  raise ResourceLimitError(f"resource_limits must be a mapping: {resolved}")
+              return configured
+          '''.replace('          ', '')
+          if old not in text:
+              raise SystemExit('resource_limits mapping marker not found')
+          resource.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          processing = Path('src/marine_track/processing_config.py')
+          text = processing.read_text(encoding='utf-8')
+          old = '''    limits_root = payload.get("resource_limits") or {}
+              if not isinstance(limits_root, dict):
+                  raise ValueError("resource_limits must be a mapping")
+          '''.replace('          ', '')
+          new = '''    limits_root = payload.get("resource_limits")
+              if limits_root is None:
+                  limits_root = {}
+              elif not isinstance(limits_root, dict):
+                  raise ValueError("resource_limits must be a mapping")
+          '''.replace('          ', '')
+          if old not in text:
+              raise SystemExit('processing_config mapping marker not found')
+          processing.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          tests = Path('tests/test_cfar_tiling_limits.py')
+          text = tests.read_text(encoding='utf-8')
+          old = '''    with pytest.raises(ResourceLimitError, match="resource_limits must be a mapping"):
+                  load_resource_limits()
+          '''.replace('          ', '')
+          new = '''    with pytest.raises(ResourceLimitError, match="resource_limits must be a mapping"):
+                  load_resource_limits()
+              with pytest.raises(ValueError, match="resource_limits must be a mapping"):
+                  load_effective_detector_config(Sensor.SENTINEL1, path=config)
+          '''.replace('          ', '')
+          if old not in text:
+              raise SystemExit('malformed resource limit test marker not found')
+          tests.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Validate
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+          ruff check --fix src tests runtime_check.py
+          python -m compileall -q src runtime_check.py
+          bash -n install_telegram_bot.sh deploy_telegram_bot.sh
+          ruff check src tests runtime_check.py
+          pytest -q
+      - name: Commit tested repair
+        run: |
+          rm -f .github/workflows/agent-fix-resource-limit-mapping.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Fail closed on malformed resource limit mappings'
+          git push origin HEAD:agent/guard-cfar-tiled-limits-20260710
