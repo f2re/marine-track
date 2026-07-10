@@ -27,7 +27,6 @@ from marine_track.calibration_phase2 import Phase2Targets
 from marine_track.models import Scene, Sensor
 from marine_track.telegram_calibration import calibration_menu_markup
 from marine_track.telegram_calibration_areas import (
-    ACTION_AREA_HOME,
     _cb,
     area_home_markup,
     preparation_result_markup,
@@ -105,11 +104,12 @@ def test_calibration_menu_exposes_area_acquisition(tmp_path):
     profile = {"status": "not_started"}
     assert "🗺 Выбрать акваторию и найти сцены" in button_labels(calibration_menu_markup(profile))
     config = make_config(tmp_path)
-    assert f"mtcal:{ACTION_AREA_HOME}" in [
+    callbacks = [
         button.callback_data
         for row in area_home_markup(config, 100).inline_keyboard
         for button in row
     ]
+    assert "mtcal:aall:0" in callbacks
 
 
 def test_resolve_builtin_default_and_saved_areas(tmp_path):
