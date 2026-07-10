@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
+from marine_track.calibration import load_calibration_profile
+from marine_track.telegram_calibration import (
+    CALIBRATION_CALLBACK_PREFIX,
+    calibration_callback as admin_calibration_callback,
+    calibration_command as admin_calibration_command,
+    calibration_menu_markup,
+    calibration_targets,
+    calibration_warning_text,
+    is_calibration_admin,
+    startup_calibration_required,
+)
 from marine_track.telegram_config import TelegramBotConfig, load_telegram_config
 from marine_track.telegram_detection import (
     DETECT_CALLBACK_PREFIX,
@@ -25,6 +37,7 @@ from marine_track.telegram_scene_browser import (
 )
 from marine_track.telegram_ui import (
     ACTION_AREAS,
+    ACTION_CALIBRATION,
     ACTION_DATES_DEFAULT,
     ACTION_DATES_LAST_BBOX,
     ACTION_DETECT_DEFAULT,
@@ -58,6 +71,7 @@ from marine_track.telegram_user_state import (
     set_output_mode,
 )
 
+LOGGER = logging.getLogger(__name__)
 CONFIG: TelegramBotConfig | None = None
 JOB_SEMAPHORE: asyncio.Semaphore | None = None
 
@@ -94,8 +108,15 @@ def saved_bbox_count(update: Update) -> int:
 
 
 def user_menu_markup(update: Update):
+    config = get_config()
     count = saved_bbox_count(update)
-    return main_menu_markup(has_last_bbox=count > 0, bbox_count=count)
+    admin = is_calibration_admin(update, config)
+    return main_menu_markup(
+        has_last_bbox=count > 0,
+        bbox_count=count,
+        is_admin=admin,
+        calibration_needed=admin and startup_calibration_required(config),
+    )
 
 
 def saved_bbox_menu(update: Update):
@@ -121,15 +142,26 @@ async def require_authorized(update: Update) -> bool:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_message:
+    del context
+    if not update.effective_message:
+        return
+    await update.effective_message.reply_text(
+        start_text(get_config(), last_bbox_label(update)),
+        parse_mode=ParseMode.HTML,
+        reply_markup=user_menu_markup(update),
+    )
+    config = get_config()
+    if is_calibration_admin(update, config) and startup_calibration_required(config):
+        profile = load_calibration_profile(config.output_dir, calibration_targets(config))
         await update.effective_message.reply_text(
-            start_text(get_config(), last_bbox_label(update)),
+            calibration_warning_text(profile),
             parse_mode=ParseMode.HTML,
-            reply_markup=user_menu_markup(update),
+            reply_markup=calibration_menu_markup(profile),
         )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    del context
     if update.effective_message:
         await update.effective_message.reply_text(
             help_text(),
@@ -143,6 +175,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def whoami_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    del context
     if update.effective_message:
         await update.effective_message.reply_text(
             f"Ваш Telegram user id: <code>{effective_user_id(update)}</code>",
@@ -152,6 +185,7 @@ async def whoami_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    del context
     if update.effective_message:
         await update.effective_message.reply_text(
             status_text(
@@ -167,6 +201,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def areas_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    del context
     if not await require_authorized(update):
         return
     if update.effective_message:
@@ -175,6 +210,7 @@ async def areas_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def output_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    del context
     if not await require_authorized(update):
         return
     if update.effective_message:
@@ -184,6 +220,10 @@ async def output_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode=ParseMode.HTML,
             reply_markup=output_mode_markup(mode),
         )
+
+
+async def calibrate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await admin_calibration_command(update, context, get_config())
 
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -221,6 +261,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode=ParseMode.HTML,
             reply_markup=user_menu_markup(update),
         )
+        return
+    if action == ACTION_CALIBRATION:
+        await admin_calibration_command(update, context, get_config())
         return
     if action == ACTION_OUTPUT_MODE:
         if not await require_authorized(update):
@@ -266,6 +309,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def output_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    del context
     query = update.callback_query
     if not query or not query.data:
         return
@@ -366,8 +410,31 @@ async def detect_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await scene_detect_callback(update, context, get_config())
 
 
+async def calibration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await admin_calibration_callback(update, context, get_config())
+
+
+async def notify_admins_on_startup(application: Application) -> None:
+    config = get_config()
+    if not config.admin_ids or not startup_calibration_required(config):
+        return
+    profile = load_calibration_profile(config.output_dir, calibration_targets(config))
+    text = calibration_warning_text(profile)
+    markup = calibration_menu_markup(profile)
+    for admin_id in sorted(config.admin_ids):
+        try:
+            await application.bot.send_message(
+                chat_id=admin_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=markup,
+            )
+        except Exception as exc:  # pragma: no cover - depends on Telegram chat state
+            LOGGER.warning("Unable to send calibration startup notice to admin %s: %s", admin_id, exc)
+
+
 def build_application() -> Application:
-    app = Application.builder().token(get_config().token).build()
+    app = Application.builder().token(get_config().token).post_init(notify_admins_on_startup).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("menu", menu_command))
@@ -375,6 +442,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("whoami", whoami_command))
     app.add_handler(CommandHandler("areas", areas_command))
     app.add_handler(CommandHandler("output", output_command))
+    app.add_handler(CommandHandler("calibrate", calibrate_command))
     app.add_handler(CommandHandler("dates", dates_command))
     app.add_handler(CommandHandler("bboxdates", bboxdates_command))
     app.add_handler(CommandHandler("image", image_command))
@@ -383,6 +451,7 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=f"^{MENU_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(output_callback, pattern=f"^{OUTPUT_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(area_callback, pattern=f"^{AREA_CALLBACK_PREFIX}:"))
+    app.add_handler(CallbackQueryHandler(calibration_callback, pattern=f"^{CALIBRATION_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(scene_scene_page_callback, pattern=f"^{PAGE_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(image_callback, pattern=f"^{CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(detect_callback, pattern=f"^{DETECT_CALLBACK_PREFIX}:"))
