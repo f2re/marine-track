@@ -1,0 +1,32 @@
+name: Agent typed assets CDSE
+
+on:
+  push:
+    branches:
+      - agent/typed-assets-cdse-20260710
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/typed-assets-cdse-20260710
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply typed asset migration
+        run: python scripts/agent_typed_assets_cdse.py
+      - name: Format and commit
+        run: |
+          python -m pip install 'ruff>=0.5'
+          ruff check --select I --fix src tests runtime_check.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm scripts/agent_typed_assets_cdse.py .github/workflows/agent-typed-assets-cdse.yml
+          git add -A
+          git commit -m 'Implement typed assets and authenticated CDSE materialization'
+          git push origin HEAD:agent/typed-assets-cdse-20260710
