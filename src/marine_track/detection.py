@@ -6,6 +6,11 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage as ndi
 
+# Numerical guards only. They prevent a uniform background from producing zero
+# or non-finite contrast. These constants are not sensor-noise calibration.
+CONTRAST_STD_FLOOR = 1e-6
+MAX_CONTRAST_SIGMA = 100.0
+
 
 @dataclass(frozen=True)
 class PixelObject:
@@ -64,8 +69,18 @@ def adaptive_threshold_candidates(
         values = image[slc][component]
         score = float(np.nanmean(values))
         peak_score = float(np.nanmax(values))
-        background_mean, background_std = local_background_stats(image, component, y0, x0, y1, x1, local_window_px)
-        contrast_sigma = 0.0 if background_std <= 0 else float((peak_score - background_mean) / background_std)
+        background_mean, background_std = local_background_stats(
+            image,
+            component,
+            y0,
+            x0,
+            y1,
+            x1,
+            local_window_px,
+        )
+        contrast_delta = max(0.0, peak_score - background_mean)
+        raw_contrast = contrast_delta / max(background_std, CONTRAST_STD_FLOOR)
+        contrast_sigma = float(min(MAX_CONTRAST_SIGMA, raw_contrast))
         if contrast_sigma < float(min_contrast_sigma):
             continue
         major_axis, minor_axis, orientation, elongation = component_shape_metrics(component)
@@ -123,7 +138,11 @@ def cfar_mask(
     if guard > 0:
         if guard % 2 == 0:
             guard += 1
-        local_max = ndi.maximum_filter(np.where(finite, image, -np.inf), size=guard, mode="nearest")
+        local_max = ndi.maximum_filter(
+            np.where(finite, image, -np.inf),
+            size=guard,
+            mode="nearest",
+        )
         mask &= image >= local_max
     return mask
 

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import math
+import os
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+from marine_track.calibration import load_calibration_profile, score_candidate
 from marine_track.detection import adaptive_threshold_candidates
 from marine_track.geospatial import RasterGeoContext, pixel_scale_m, pixel_to_lonlat
 from marine_track.land_mask import apply_land_mask
@@ -25,12 +28,18 @@ def detect_candidates_from_raster(
     min_contrast_sigma: float = 0.0,
     land_mask_geojson: str | Path | None = None,
     shoreline_buffer_m: float = 0.0,
+    calibration_profile: dict[str, Any] | None = None,
 ) -> list[VesselDetection]:
     """Run the MVP candidate detector on one georeferenced raster band."""
     try:
         import rasterio
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise RuntimeError("rasterio is required for raster detection") from exc
+
+    if calibration_profile is None:
+        calibration_profile = load_calibration_profile(
+            os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram")
+        )
 
     with rasterio.open(path) as dataset:
         image = dataset.read(1).astype("float32")
@@ -56,6 +65,8 @@ def detect_candidates_from_raster(
         min_contrast_sigma=min_contrast_sigma,
     )
 
+    profile_id = calibration_profile.get("profile_id") if calibration_profile else None
+    profile_active = bool(calibration_profile and calibration_profile.get("active"))
     detections: list[VesselDetection] = []
     for idx, candidate in enumerate(candidates, start=1):
         row, col = candidate.centroid_yx
@@ -64,6 +75,12 @@ def detect_candidates_from_raster(
         major_axis_m = candidate.major_axis_px * scale.mean_m
         minor_axis_m = candidate.minor_axis_px * scale.mean_m
         area_m2 = candidate.area_px * scale.area_m2
+        ranking_score = score_candidate(
+            candidate.peak_score,
+            candidate.contrast_sigma,
+            candidate.elongation,
+            calibration_profile,
+        )
         detections.append(
             VesselDetection(
                 detection_id=f"{product_id}_{idx:06d}",
@@ -73,7 +90,7 @@ def detect_candidates_from_raster(
                 provider=provider,
                 product_id=product_id,
                 acquisition_time=acquisition_time,
-                confidence=_score_to_confidence(candidate.peak_score, candidate.contrast_sigma, candidate.elongation),
+                confidence=ranking_score,
                 wake_type="ship_candidate",
                 metadata={
                     "area_px": candidate.area_px,
@@ -94,6 +111,9 @@ def detect_candidates_from_raster(
                     "background_mean": candidate.background_mean,
                     "background_std": candidate.background_std,
                     "contrast_sigma": candidate.contrast_sigma,
+                    "ranking_score": ranking_score,
+                    "ranking_score_kind": "calibrated_logistic" if profile_active else "heuristic_linear",
+                    "calibration_profile_id": profile_id,
                     "detector": "local_cfar" if local_window_px > 0 else "global_threshold",
                     "threshold_sigma": threshold_sigma,
                     "min_contrast_sigma": min_contrast_sigma,
@@ -107,8 +127,11 @@ def detect_candidates_from_raster(
     return detections
 
 
-def _score_to_confidence(peak_score: float, contrast_sigma: float, elongation: float) -> float:
-    contrast_term = max(0.0, min(1.0, contrast_sigma / 8.0))
-    peak_term = max(0.0, min(1.0, float(peak_score)))
-    shape_term = max(0.0, min(1.0, (elongation - 1.0) / 5.0))
-    return max(0.0, min(1.0, 0.50 * peak_term + 0.35 * contrast_term + 0.15 * shape_term))
+def _score_to_confidence(
+    peak_score: float,
+    contrast_sigma: float,
+    elongation: float,
+    calibration_profile: dict[str, Any] | None = None,
+) -> float:
+    """Compatibility wrapper for tests and callers; value is a ranking score, not probability."""
+    return score_candidate(peak_score, contrast_sigma, elongation, calibration_profile)

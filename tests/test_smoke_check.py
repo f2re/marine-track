@@ -29,7 +29,7 @@ def test_smoke_check_reads_env_and_creates_runtime_dirs(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    errors = run_smoke_check(tmp_path, env_file, check_telegram=False)
+    errors = run_smoke_check(tmp_path, env_file)
 
     assert errors == []
     assert (tmp_path / "runs" / "telegram").is_dir()

@@ -24,13 +24,19 @@ ACTION_DETECT_LAST_BBOX = "detect_last_bbox"
 ACTION_DATES_LAST_BBOX = "dates_last_bbox"
 ACTION_AREAS = "areas"
 ACTION_OUTPUT_MODE = "output_mode"
+ACTION_CALIBRATION = "calibration"
 ACTION_MENU = "menu"
 ACTION_STATUS = "status"
 ACTION_HELP = "help"
 ACTION_WHOAMI = "whoami"
 
 
-def main_menu_markup(has_last_bbox: bool = False, bbox_count: int | None = None) -> InlineKeyboardMarkup:
+def main_menu_markup(
+    has_last_bbox: bool = False,
+    bbox_count: int | None = None,
+    is_admin: bool = False,
+    calibration_needed: bool = False,
+) -> InlineKeyboardMarkup:
     saved_count = bbox_count if bbox_count is not None else int(has_last_bbox)
     rows = [
         [
@@ -47,16 +53,26 @@ def main_menu_markup(has_last_bbox: bool = False, bbox_count: int | None = None)
         )
     elif saved_count > 1:
         rows.append([InlineKeyboardButton("📍 Мои районы", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_AREAS}")])
-    rows.extend(
+    rows.append(
         [
+            InlineKeyboardButton("📤 Выдача", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_OUTPUT_MODE}"),
+            InlineKeyboardButton("⚙️ Статус", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_STATUS}"),
+        ]
+    )
+    if is_admin:
+        marker = "⚠️ " if calibration_needed else ""
+        rows.append(
             [
-                InlineKeyboardButton("📤 Выдача", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_OUTPUT_MODE}"),
-                InlineKeyboardButton("⚙️ Статус", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_STATUS}"),
-            ],
-            [
-                InlineKeyboardButton("❓ Помощь", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_HELP}"),
-                InlineKeyboardButton("🆔 Мой ID", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_WHOAMI}"),
-            ],
+                InlineKeyboardButton(
+                    f"{marker}🧪 Калибровка",
+                    callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_CALIBRATION}",
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton("❓ Помощь", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_HELP}"),
+            InlineKeyboardButton("🆔 Мой ID", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_WHOAMI}"),
         ]
     )
     return InlineKeyboardMarkup(rows)
@@ -98,7 +114,8 @@ def help_text() -> str:
         "<code>/detectbbox sentinel1 36.5 43.8 38.5 45.0 12</code> — сразу найти и обработать bbox.\n"
         "<code>/areas</code> — список сохраненных районов.\n"
         "<code>/detect token</code> — повторить детекцию по сохраненному token.\n"
-        "<code>/image token</code> — preview сцены.\n\n"
+        "<code>/image token</code> — preview сцены.\n"
+        "<code>/calibrate</code> — интерфейс разметки для администратора.\n\n"
         "<b>Формат bbox</b>\n"
         "<code>west south east north</code>, координаты в градусах WGS84."
     )
@@ -128,6 +145,7 @@ def status_text(
         f"max_crops: <code>{config.detection_max_crops}</code>\n"
         f"land_mask: <code>{html.escape(str(land_mask))}</code> ({land_mask_exists})\n"
         f"shoreline_buffer_m: <code>{config.shoreline_buffer_m}</code>\n"
+        f"calibration_min_labels: <code>{config.calibration_min_labels}</code>\n"
         f"output_dir: <code>{html.escape(str(config.output_dir))}</code>"
     )
 
