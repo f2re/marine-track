@@ -88,7 +88,7 @@ def search_calibration_scenes(
         (
             f"{owner_user_id}|{owner_chat_id}|{area_id}|{sensor.value}|"
             f"{start.isoformat()}|{end.isoformat()}"
-        ).encode("utf-8")
+        ).encode()
     ).hexdigest()[:16]
     scenes = []
     for token, scene in zip(tokens, result.scenes, strict=False):
