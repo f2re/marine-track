@@ -8,6 +8,7 @@ ConditionPathIsDirectory=/opt/marine_track/current
 Type=simple
 User=marine-track
 Group=marine-track
+Environment=MARINE_TRACK_ENV_FILE=/etc/marine-track/marine-track.env
 EnvironmentFile=/etc/marine-track/marine-track.env
 WorkingDirectory=/opt/marine_track/current
 ExecStartPre=/opt/marine_track/current/.venv/bin/python /opt/marine_track/current/runtime_check.py
