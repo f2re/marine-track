@@ -40,23 +40,46 @@ def main_menu_markup(
     saved_count = bbox_count if bbox_count is not None else int(has_last_bbox)
     rows = [
         [
-            InlineKeyboardButton("🔎 Найти суда", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DETECT_DEFAULT}"),
-            InlineKeyboardButton("🕒 Сроки снимков", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DATES_DEFAULT}"),
+            InlineKeyboardButton(
+                "🔎 Найти кандидаты",
+                callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DETECT_DEFAULT}",
+            ),
+            InlineKeyboardButton(
+                "🕒 Сроки снимков",
+                callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DATES_DEFAULT}",
+            ),
         ],
     ]
     if saved_count == 1:
         rows.append(
             [
-                InlineKeyboardButton("↻ Повторить район", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DETECT_LAST_BBOX}"),
-                InlineKeyboardButton("🕒 Сроки района", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DATES_LAST_BBOX}"),
+                InlineKeyboardButton(
+                    "↻ Повторить район",
+                    callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DETECT_LAST_BBOX}",
+                ),
+                InlineKeyboardButton(
+                    "🕒 Сроки района",
+                    callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_DATES_LAST_BBOX}",
+                ),
             ]
         )
     elif saved_count > 1:
-        rows.append([InlineKeyboardButton("📍 Мои районы", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_AREAS}")])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "📍 Мои районы",
+                    callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_AREAS}",
+                )
+            ]
+        )
     rows.append(
         [
-            InlineKeyboardButton("📤 Выдача", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_OUTPUT_MODE}"),
-            InlineKeyboardButton("⚙️ Статус", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_STATUS}"),
+            InlineKeyboardButton(
+                "📤 Выдача", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_OUTPUT_MODE}"
+            ),
+            InlineKeyboardButton(
+                "⚙️ Статус", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_STATUS}"
+            ),
         ]
     )
     if is_admin:
@@ -71,31 +94,41 @@ def main_menu_markup(
         )
     rows.append(
         [
-            InlineKeyboardButton("❓ Помощь", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_HELP}"),
-            InlineKeyboardButton("🆔 Мой ID", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_WHOAMI}"),
+            InlineKeyboardButton(
+                "❓ Помощь", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_HELP}"
+            ),
+            InlineKeyboardButton(
+                "🆔 Мой ID", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_WHOAMI}"
+            ),
         ]
     )
     return InlineKeyboardMarkup(rows)
 
 
 def back_to_menu_markup(has_last_bbox: bool = False) -> InlineKeyboardMarkup:
+    del has_last_bbox
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")]]
     )
 
 
 def start_text(config: TelegramBotConfig, last_bbox_label: str | None = None) -> str:
-    last_bbox = f"\nПоследний район: <code>{html.escape(last_bbox_label)}</code>" if last_bbox_label else ""
+    last_bbox = (
+        f"\nПоследний район: <code>{html.escape(last_bbox_label)}</code>"
+        if last_bbox_label
+        else ""
+    )
     return (
         "<b>Marine Track</b>\n"
-        "Поиск спутниковых снимков и первичная детекция судов.\n\n"
+        "Поиск спутниковых снимков и первичная детекция кандидатов судов. "
+        "Ranking score не является вероятностью, AIS — внешний reference, Kelvin speed — research proxy.\n\n"
         "<b>Быстрый путь</b>\n"
-        "1. Нажмите <b>🔎 Найти суда</b>.\n"
-        "2. Бот найдет свежий GeoTIFF/COG снимок по default AOI.\n"
-        "3. Получите обзор, crop судов и GeoJSON/CSV/Parquet.\n\n"
+        "1. Нажмите <b>🔎 Найти кандидаты</b>.\n"
+        "2. Бот найдёт свежий GeoTIFF/COG снимок по default AOI.\n"
+        "3. Получите обзор кандидатов, crop и GeoJSON/CSV/Parquet.\n\n"
         f"Default AOI: <code>{html.escape(str(config.default_aoi))}</code>\n"
-        f"Период: <code>{config.default_lookback_hours} ч</code>, sensor: <code>{config.default_sensor.value}</code>"
-        f"{last_bbox}"
+        f"Период: <code>{config.default_lookback_hours} ч</code>, "
+        f"sensor: <code>{config.default_sensor.value}</code>{last_bbox}"
     )
 
 
@@ -103,21 +136,26 @@ def help_text() -> str:
     return (
         "<b>Как пользоваться</b>\n\n"
         "<b>Без ручного ввода</b>\n"
-        "• <b>🔎 Найти суда</b> — поиск свежей сцены по default AOI и запуск детекции.\n"
+        "• <b>🔎 Найти кандидаты</b> — поиск свежей сцены и candidate detection.\n"
         "• <b>↻ Повторить район</b> — повторить последний bbox из /detectbbox.\n"
         "• <b>🕒 Сроки района</b> — показать снимки для последнего bbox.\n"
-        "• <b>📍 Мои районы</b> — выбрать сохраненный bbox для сроков или детекции.\n"
-        "• <b>📤 Выдача</b> — выбрать, что отправлять после детекции: картинки, файлы или всё.\n\n"
+        "• <b>📍 Мои районы</b> — выбрать сохранённый bbox.\n"
+        "• <b>📤 Выдача</b> — выбрать картинки, файлы или всё.\n\n"
+        "<b>Интерпретация</b>\n"
+        "• ranking_score — относительный score, не вероятность.\n"
+        "• operational speed по умолчанию не оценена.\n"
+        "• AIS SOG/COG — внешний reference, не ground truth.\n"
+        "• Kelvin speed — экспериментальный research proxy.\n\n"
         "<b>Команды для точного управления</b>\n"
         "<code>/dates sentinel1 12</code> — сроки по default AOI.\n"
         "<code>/bboxdates sentinel1 36.5 43.8 38.5 45.0 12</code> — сроки по bbox.\n"
-        "<code>/detectbbox sentinel1 36.5 43.8 38.5 45.0 12</code> — сразу найти и обработать bbox.\n"
-        "<code>/areas</code> — список сохраненных районов.\n"
-        "<code>/detect token</code> — повторить детекцию по сохраненному token.\n"
+        "<code>/detectbbox sentinel1 36.5 43.8 38.5 45.0 12</code> — обработать bbox.\n"
+        "<code>/areas</code> — список сохранённых районов.\n"
+        "<code>/detect token</code> — повторить обработку сохранённой сцены.\n"
         "<code>/image token</code> — preview сцены.\n"
         "<code>/calibrate</code> — интерфейс разметки для администратора.\n\n"
         "<b>Формат bbox</b>\n"
-        "<code>west south east north</code>, координаты в градусах WGS84."
+        "<code>west south east north</code>, координаты WGS84."
     )
 
 
@@ -146,6 +184,8 @@ def status_text(
         f"land_mask: <code>{html.escape(str(land_mask))}</code> ({land_mask_exists})\n"
         f"shoreline_buffer_m: <code>{config.shoreline_buffer_m}</code>\n"
         f"calibration_min_labels: <code>{config.calibration_min_labels}</code>\n"
+        "result_type: <code>vessel_candidates</code>\n"
+        "operational_speed: <code>not_estimated by default</code>\n"
         f"output_dir: <code>{html.escape(str(config.output_dir))}</code>"
     )
 
@@ -166,13 +206,16 @@ def compact_error(title: str, detail: object, next_step: str | None = None) -> s
 def areas_text(saved_bboxes: list[SavedBbox]) -> str:
     if not saved_bboxes:
         return (
-            "<b>Сохраненные районы</b>\n"
+            "<b>Сохранённые районы</b>\n"
             "Пока пусто.\n\n"
-            "Что сделать: выполните <code>/bboxdates</code> или <code>/detectbbox</code> с bbox."
+            "Что сделать: выполните <code>/bboxdates</code> или <code>/detectbbox</code>."
         )
-    lines = ["<b>Сохраненные районы</b>"]
+    lines = ["<b>Сохранённые районы</b>"]
     for index, bbox in enumerate(saved_bboxes, start=1):
-        lines.append(f"{index}. <code>{html.escape(bbox_label(bbox))}</code> · запусков: <code>{bbox.use_count}</code>")
+        lines.append(
+            f"{index}. <code>{html.escape(bbox_label(bbox))}</code> · "
+            f"запусков: <code>{bbox.use_count}</code>"
+        )
     lines.append("")
     lines.append("Выберите действие под нужным районом.")
     return "\n".join(lines)
@@ -183,12 +226,21 @@ def areas_markup(saved_bboxes: list[SavedBbox]) -> InlineKeyboardMarkup:
     for index, bbox in enumerate(saved_bboxes, start=1):
         rows.append(
             [
-                InlineKeyboardButton(f"{index} 🔎 Детекция", callback_data=f"{AREA_CALLBACK_PREFIX}:d:{bbox.id}"),
-                InlineKeyboardButton(f"{index} 🕒 Сроки", callback_data=f"{AREA_CALLBACK_PREFIX}:t:{bbox.id}"),
-                InlineKeyboardButton(f"{index} 🗑", callback_data=f"{AREA_CALLBACK_PREFIX}:x:{bbox.id}"),
+                InlineKeyboardButton(
+                    f"{index} 🔎 Кандидаты",
+                    callback_data=f"{AREA_CALLBACK_PREFIX}:d:{bbox.id}",
+                ),
+                InlineKeyboardButton(
+                    f"{index} 🕒 Сроки", callback_data=f"{AREA_CALLBACK_PREFIX}:t:{bbox.id}"
+                ),
+                InlineKeyboardButton(
+                    f"{index} 🗑", callback_data=f"{AREA_CALLBACK_PREFIX}:x:{bbox.id}"
+                ),
             ]
         )
-    rows.append([InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")])
+    rows.append(
+        [InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")]
+    )
     return InlineKeyboardMarkup(rows)
 
 
@@ -196,7 +248,7 @@ def output_mode_text(current_mode: str) -> str:
     return (
         "<b>Режим выдачи результата</b>\n"
         f"Сейчас: <code>{html.escape(output_mode_label(current_mode))}</code>\n\n"
-        "<b>Картинки</b> — overview и crop судов.\n"
+        "<b>Картинки</b> — overview и crop кандидатов.\n"
         "<b>Файлы</b> — GeoJSON, CSV, Parquet и report.json.\n"
         "<b>Всё</b> — картинки и файлы."
     )
@@ -205,7 +257,9 @@ def output_mode_text(current_mode: str) -> str:
 def output_mode_markup(current_mode: str) -> InlineKeyboardMarkup:
     def button(label: str, mode: str) -> InlineKeyboardButton:
         prefix = "✓ " if mode == current_mode else ""
-        return InlineKeyboardButton(f"{prefix}{label}", callback_data=f"{OUTPUT_CALLBACK_PREFIX}:{mode}")
+        return InlineKeyboardButton(
+            f"{prefix}{label}", callback_data=f"{OUTPUT_CALLBACK_PREFIX}:{mode}"
+        )
 
     return InlineKeyboardMarkup(
         [
