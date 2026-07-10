@@ -28,8 +28,12 @@ CORE_MODULES = (
     "marine_track.cli",
     "marine_track.pipeline",
     "marine_track.calibration",
+    "marine_track.calibration_phase2",
+    "marine_track.calibration_phase2_tiles",
+    "marine_track.calibration_phase2_evaluation",
     "marine_track.telegram_bot",
     "marine_track.telegram_calibration",
+    "marine_track.telegram_calibration_phase2",
     "marine_track.telegram_detection",
     "marine_track.telegram_ui",
     "marine_track.telegram_user_state",
@@ -117,25 +121,26 @@ def check_paths() -> list[str]:
     land_mask = os.getenv("MARINE_TRACK_LAND_MASK_GEOJSON", "").strip()
     if land_mask and not project_path(land_mask).is_file():
         errors.append(f"land mask GeoJSON not found: {project_path(land_mask)}")
+    calibration_context = os.getenv("MARINE_TRACK_CALIBRATION_CONTEXT_GEOJSON", "").strip()
+    if calibration_context and not project_path(calibration_context).is_file():
+        errors.append(
+            f"calibration context GeoJSON not found: {project_path(calibration_context)}"
+        )
     local_track_csv = os.getenv("MARINE_TRACK_AIS_CSV", "").strip()
     if local_track_csv and not project_path(local_track_csv).is_file():
         errors.append(f"local vessel track CSV not found: {project_path(local_track_csv)}")
-    out_dir = project_path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram"))
-    try:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        probe = out_dir / ".runtime_write_test"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink(missing_ok=True)
-    except Exception as exc:
-        errors.append(f"output dir is not writable: {out_dir}: {exc}")
-    cache_dir = project_path(os.getenv("MARINE_TRACK_CACHE_DIR", "runs/cache"))
-    try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        probe = cache_dir / ".runtime_write_test"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink(missing_ok=True)
-    except Exception as exc:
-        errors.append(f"cache dir is not writable: {cache_dir}: {exc}")
+    for name, default in (
+        ("MARINE_TRACK_OUTPUT_DIR", "runs/telegram"),
+        ("MARINE_TRACK_CACHE_DIR", "runs/cache"),
+    ):
+        directory = project_path(os.getenv(name, default))
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            probe = directory / ".runtime_write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+        except Exception as exc:
+            errors.append(f"{name.lower()} is not writable: {directory}: {exc}")
     return errors
 
 
@@ -148,7 +153,12 @@ def check_telegram_env() -> list[str]:
 
 def check_numeric_env() -> list[str]:
     errors: list[str] = []
-    for name in (
+    float_names = {
+        "MARINE_TRACK_AIS_MAX_DISTANCE_M",
+        "MARINE_TRACK_CALIBRATION_PHASE2_MIN_VALID_FRACTION",
+        "MARINE_TRACK_CALIBRATION_PHASE2_MIN_IMPROVEMENT",
+    }
+    names = (
         "MARINE_TRACK_DEFAULT_LOOKBACK_HOURS",
         "MARINE_TRACK_MAX_RESULTS",
         "MARINE_TRACK_MAX_CONCURRENT_JOBS",
@@ -157,6 +167,12 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_CALIBRATION_MIN_POSITIVE",
         "MARINE_TRACK_CALIBRATION_MIN_NEGATIVE",
         "MARINE_TRACK_CALIBRATION_CROP_SIZE_PX",
+        "MARINE_TRACK_CALIBRATION_PHASE2_MAX_TILES_PER_SCENE",
+        "MARINE_TRACK_CALIBRATION_PHASE2_MIN_VALID_FRACTION",
+        "MARINE_TRACK_CALIBRATION_PHASE2_MIN_TEST_GROUPS",
+        "MARINE_TRACK_CALIBRATION_PHASE2_MIN_VALIDATION_GROUPS",
+        "MARINE_TRACK_CALIBRATION_PHASE2_MIN_IMPROVEMENT",
+        "MARINE_TRACK_CALIBRATION_PHASE2_BOOTSTRAP_SAMPLES",
         "MARINE_TRACK_SHORELINE_BUFFER_M",
         "MARINE_TRACK_SCENE_SEARCH_TTL_MIN",
         "MARINE_TRACK_SCENE_SEARCH_CACHE_RETENTION_DAYS",
@@ -167,12 +183,13 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_AIS_MATCH_WINDOW_MIN",
         "MARINE_TRACK_AIS_TRACK_WINDOW_MIN",
         "MARINE_TRACK_AIS_MAX_DISTANCE_M",
-    ):
+    )
+    for name in names:
         raw = os.getenv(name)
         if raw is None:
             continue
         try:
-            float(raw) if name == "MARINE_TRACK_AIS_MAX_DISTANCE_M" else int(raw)
+            float(raw) if name in float_names else int(raw)
         except ValueError:
             errors.append(f"{name} must be numeric, got {raw!r}")
     return errors
