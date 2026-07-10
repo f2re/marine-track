@@ -107,7 +107,6 @@ all   = core + scene + aux
 scene = core + scene
 aux   = core + aux
 core  = core only
-none  = alias for core
 ```
 
 Fix by redeploying with the intended profile:
@@ -128,4 +127,4 @@ Use:
 /bboxdates sentinel1 36.5 43.8 38.5 45.0 12
 ```
 
-Then choose a scene with `🔎 Детекция`. For Sentinel-1 detection, Planetary Computer Sentinel-1 RTC COG scenes are the most useful path in the current MVP.
+Then choose a scene with `🔎 Детекция`. For Sentinel-1 detection, Planetary Computer Sentinel-1 RTC COG scenes are useful when the required account/API/SAS access is available; otherwise use the CDSE COG/OData fallback after the provider migration.

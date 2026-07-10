@@ -52,7 +52,6 @@ all    = core + scene providers + auxiliary providers
 scene  = core + ASF/STAC/Planetary Computer/Sentinel Hub
 aux    = core + Copernicus Marine
 core   = only core package; provider packages are skipped
-none   = alias for core
 ```
 
 The selected profile is written to `.env` as `MARINE_TRACK_PROVIDER_PROFILE`. `runtime_check.py` reads it and validates only the selected provider package set. This allows a core-only deployment to start without `asf-search`, `sentinelhub`, `planetary-computer`, `pystac-client` or `copernicusmarine` installed.

@@ -45,7 +45,7 @@ bash install_telegram_bot.sh --providers core --yes
 | `all` | `.[providers]` | core + scene + aux |
 | `scene` | `.[scene-providers]` | core + scene |
 | `aux` | `.[aux-providers]` | core + aux |
-| `core` / `none` | `.` | only core |
+| `core` | `.` | only core |
 
 ## Интерактивная настройка ключей
 
@@ -57,11 +57,11 @@ bash install_telegram_bot.sh --providers core --yes
 
 | Provider | Sensor | Код | Доступ | Примечание |
 |---|---|---|---|---|
-| `asf` | Sentinel-1 | `marine_track.data_sources.asf_provider.ASFProvider` | Search без ключа, download через NASA Earthdata | Возвращает ASF product ZIP/preview; ZIP не обрабатывается как GeoTIFF в MVP detection. |
-| `copernicus_cdse` | Sentinel-1/2 | `marine_track.data_sources.stac_provider.STACProvider` | CDSE STAC, optional OAuth bearer | Поиск через `https://catalogue.dataspace.copernicus.eu/stac`. |
-| `planetary_computer` | Sentinel-1 RTC, Sentinel-2 L2A | `STACProvider` | Public STAC; asset signing через `planetary-computer` | Основной provider для `/detectbbox`, когда нужны COG/GeoTIFF assets. |
+| `asf` | Sentinel-1 | `marine_track.data_sources.asf_provider.ASFProvider` | Search без ключа, download через NASA Earthdata | Search/preview/archive; ZIP/GRD не обрабатывается как GeoTIFF в текущем detection MVP. |
+| `copernicus_cdse` | Sentinel-1/2 | `marine_track.data_sources.stac_provider.STACProvider` | CDSE STAC, optional OAuth bearer | Целевой endpoint `https://stac.dataspace.copernicus.eu/v1/`; текущий код требует миграции с legacy URL и collection names. |
+| `planetary_computer` | Sentinel-1 RTC/GRD, Sentinel-2 L2A | `STACProvider` | STAC discovery; asset signing/auth flow | Практичный COG fallback для `/detectbbox`; S1 RTC asset требует account/API/SAS preflight. |
 | `earthsearch` | Sentinel-2 L2A | `STACProvider` | Public STAC | Только Sentinel-2. Sentinel-1/EarthSearch не включен в priority, чтобы не было ложной конфигурации. |
-| `sentinelhub` | Sentinel-1/2 | `marine_track.data_sources.sentinelhub_provider.SentinelHubProvider` | OAuth client credentials или access token | Реальный Sentinel Hub Catalog API provider. Не создает фейковых raster assets; показывает только то, что вернул Catalog. |
+| `sentinelhub` | Sentinel-1/2 | `marine_track.data_sources.sentinelhub_provider.SentinelHubProvider` | OAuth client credentials или access token | Catalog provider; не гарантирует direct processable COG и не считается бесплатным без проверки quota/contract. |
 
 ## Auxiliary providers
 
@@ -79,7 +79,7 @@ bash install_telegram_bot.sh --providers core --yes
 MARINE_TRACK_PROVIDER_PROFILE=all
 ```
 
-Допустимые значения: `all`, `scene`, `aux`, `core`, `none`. Значение управляет установкой и проверкой Python provider packages. Настройки доступа ниже всё равно можно хранить в `.env`; они будут использованы, когда соответствующий provider установлен.
+Допустимые значения: `all`, `scene`, `aux`, `core`. Значение управляет установкой и проверкой Python provider packages. Настройки доступа ниже всё равно можно хранить в `.env`; они будут использованы, когда соответствующий provider установлен.
 
 ### ASF / NASA Earthdata
 
@@ -95,6 +95,10 @@ EARTHDATA_TOKEN=
 
 ```text
 CDSE_ACCESS_TOKEN=
+CDSE_STAC_URL=https://stac.dataspace.copernicus.eu/v1/
+CDSE_STAC_SENTINEL1_COLLECTION=sentinel-1-grd
+CDSE_STAC_SENTINEL2_COLLECTION=sentinel-2-l2a
+CDSE_ODATA_URL=https://catalogue.dataspace.copernicus.eu/odata/v1/Products
 CDSE_TOKEN_URL=https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token
 CDSE_CLIENT_ID=cdse-public
 CDSE_CLIENT_SECRET=
@@ -102,11 +106,11 @@ CDSE_USERNAME=
 CDSE_PASSWORD=
 ```
 
-Как получить: создать аккаунт Copernicus Data Space Ecosystem. Если `CDSE_ACCESS_TOKEN` задан, он используется как bearer token. Если заданы `CDSE_USERNAME` и `CDSE_PASSWORD`, код получает token через OAuth password grant. По умолчанию используется public client `cdse-public`; при необходимости можно задать собственный client id/secret.
+Как получить: создать аккаунт Copernicus Data Space Ecosystem. Если `CDSE_ACCESS_TOKEN` задан, он используется как bearer token. Если заданы `CDSE_USERNAME` и `CDSE_PASSWORD`, код получает token через OAuth password grant. По умолчанию используется public client `cdse-public`; при необходимости можно задать собственный client id/secret. `CDSE_STAC_*` и `CDSE_ODATA_URL` — целевой provider contract; миграция к ним отмечена в `docs/IMPLEMENTATION_PLAN.md`.
 
 ### Planetary Computer
 
-Дополнительные credentials не требуются. Для assets используется библиотека `planetary-computer`, которая подписывает URL при materialization. Для этого нужен профиль `all` или `scene`.
+STAC discovery может быть публичным, но Sentinel-1 RTC asset требует Planetary Computer account/API/SAS flow. Для materialization нужен preflight доступ и библиотека `planetary-computer`; token не сохраняется в report. Для этого нужен профиль `all` или `scene`.
 
 ### EarthSearch
 

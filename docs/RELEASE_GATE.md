@@ -1,33 +1,51 @@
-# Release Gate v0.1
+# Release Gate v0.2
 
-Перед расширением алгоритмов и новых источников проект должен стабильно пройти эксплуатационный gate первого запуска.
+Release gate отделяет «код запускается» от «метод научно подтверждён». До закрытия engineering gate нельзя объявлять detector operational и расширять алгоритмы ради новых функций.
 
-## Обязательные проверки
+## A. Engineering gate
 
 - [ ] `bash -n install_telegram_bot.sh` проходит.
 - [ ] `bash -n deploy_telegram_bot.sh` проходит.
-- [ ] `python -m pytest -q` проходит.
+- [ ] `python -m pytest -q` проходит без stale tests.
 - [ ] `ruff check src tests` проходит.
-- [ ] Clean install создает рабочий `marine-track-bot.service`.
-- [ ] Minimal deploy с provider profile `core` проходит.
-- [ ] Full deploy с provider profile `all` проходит или дает понятную ошибку отсутствующих provider-модулей.
-- [ ] Пустой Telegram token валит deploy до restart.
-- [ ] Неверный Telegram token валит deploy на Telegram healthcheck до restart.
-- [ ] `/start`, `/menu`, `/status`, `/whoami` отвечают после запуска сервиса.
-- [ ] `/dates sentinel1 12` либо показывает сцены, либо дает понятную provider/search ошибку.
-- [ ] `/detectbbox sentinel1 west south east north 12` запускает полный сценарий или дает понятную provider/materializer ошибку.
-- [ ] Повторный deploy не скачивает land mask заново, если файл уже есть и force update выключен.
-- [ ] Повторные `/dates`, `/bboxdates`, `/detectbbox` используют search/raster cache там, где применимо.
+- [ ] Clean install создаёт рабочий `marine-track-bot.service`.
+- [ ] `MARINE_TRACK_PROVIDER_PROFILE=core` runtime check проходит с тестовым token.
+- [ ] Profile `all` либо проходит, либо явно сообщает отсутствующие optional provider modules/credentials.
+- [ ] Пустой Telegram token останавливает deploy до restart.
+- [ ] Неверный Telegram token останавливает deploy на healthcheck до restart.
+- [ ] `/start`, `/menu`, `/status`, `/whoami` отвечают после запуска.
+- [ ] `/dates` и `/detectbbox` возвращают сцены или typed provider/materializer error.
+- [ ] Preview/archive-only asset никогда не передаётся detector как raster.
+- [ ] Search/raster cache atomic; параллельная загрузка одного asset защищена lock-файлом.
+- [ ] Повторный deploy не перезаписывает `.env`, runs и готовую land mask.
+- [ ] Отчёт содержит provider, collection, asset, CRS/GSD, effective config, code commit и ошибки.
 
-## Правило приоритета
+## B. Data-access gate
 
-Пока этот gate не закрыт на сервере, не добавлять новые providers, Sentinel-2 full stack, AIS rendering и ASF ZIP/GRD processing.
+- [ ] CDSE STAC использует `https://stac.dataspace.copernicus.eu/v1/`.
+- [ ] CDSE collections: `sentinel-1-grd`, `sentinel-2-l2a`.
+- [ ] CDSE OData fallback проверен на той же AOI/time window.
+- [ ] Planetary Computer auth/SAS preflight проверен отдельно от public catalog search.
+- [ ] ASF явно помечен как archive/preview до SAFE/GRD processing.
+- [ ] Provider capability и media type проверяются до materialization.
 
-## Следующий порядок реализации
+## C. Scientific gate
 
-1. Закрыть фактические ошибки установки и деплоя на сервере.
-2. Держать документацию install/deploy синхронизированной с реальным скриптом.
-3. Улучшать Telegram UX только если это не ломает release gate.
-4. После закрытия gate перейти к режиму выдачи результата: `картинки`, `файлы`, `всё`.
-5. Затем добавить lock-файлы для конкурентного raster cache.
-6. Затем вернуться к AIS track rendering и Sentinel-2 full stack.
+- [ ] Есть scene manifest, labels, negative scenes и data card.
+- [ ] Есть fixed scene-level/spatial-temporal train/validation/test split.
+- [ ] Есть classical CFAR baseline и error taxonomy.
+- [ ] Метрики detection: precision/recall/F1, POD/FAR/CSI, false alarms/km², localization error.
+- [ ] Метрики wake: detection rate, false-wake rate, angular error.
+- [ ] Метрики speed: bias/MAE/RMSE/coverage against paired AIS/reference.
+- [ ] Метрики стратифицированы по sensor/polarization/incidence/wind/depth/coast/open sea.
+- [ ] `confidence` calibrated on a held-out calibration split; до этого это `evidence_score`.
+- [ ] Kelvin wavelength выдаётся только при applicability/QC/uncertainty.
+- [ ] AIS/Ocean context не подменяют отсутствие спутникового признака.
+
+## Current audit status (2026-07-10)
+
+- Engineering: **не закрыт** — 77 tests passed, 4 failed; ruff reports 2 import-order errors.
+- Data access: **не закрыт** — CDSE provider hard-codes deprecated STAC endpoint/legacy collection names.
+- Scientific: **не закрыт** — benchmark, labels, calibration and uncertainty отсутствуют.
+
+Подробности и приоритеты: [`AUDIT_2026-07-10.md`](AUDIT_2026-07-10.md), [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).

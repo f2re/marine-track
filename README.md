@@ -1,11 +1,11 @@
 # Marine Track
 
-Marine Track — MVP-система для поиска спутниковых сцен по акватории и первичной детекции судов с отправкой результатов в Telegram.
+Marine Track — MVP-система для поиска спутниковых сцен по акватории и формирования геопривязанных кандидатов судов с отправкой результатов в Telegram.
 
 Текущий pipeline:
 
 ```text
-AOI или bbox → кешированный поиск Sentinel-сцен → выбор срока → кешированный GeoTIFF/COG asset → AOI crop → land/shoreline mask → local CFAR detector → wake/AIS enrichment → обзорный PNG → crop судов → GeoJSON/CSV/Parquet/report.json → Telegram
+AOI или bbox → кешированный поиск Sentinel-сцен → processable GeoTIFF/COG → AOI crop → land/shoreline mask → local-CFAR-style candidate detector → wake/AIS enrichment → overview/crops → GeoJSON/CSV/Parquet/report.json → Telegram
 ```
 
 ## Основное правило установки
@@ -25,11 +25,13 @@ bash deploy_telegram_bot.sh --providers all
 
 Пока release gate v0.1 не закрыт на сервере, не добавлять новые providers, Sentinel-2 full stack и ASF ZIP/GRD processing.
 
+Актуальный технический и научный аудит: [`docs/AUDIT_2026-07-10.md`](docs/AUDIT_2026-07-10.md). На 2026-07-10 локальный gate не закрыт: 77 тестов проходят, 4 падают; `ruff` сообщает 2 import errors.
+
 ## Что уже реализовано
 
 - Telegram bot `marine-track-bot`.
 - Главное inline-меню: `Найти суда`, `Сроки снимков`, `Повторить район`, `Сроки района`, `Мои районы`, `Выдача`, `Статус`, `Помощь`, `Мой ID`.
-- Быстрый сценарий без ручного token: default AOI → свежая detection-capable сцена → детекция → файлы.
+- Быстрый сценарий без ручного token: default AOI → свежая detection-capable сцена → candidate detection → файлы.
 - Сохраненные bbox пользователя: `/bboxdates` и `/detectbbox` сохраняют до 10 районов для повторного запуска кнопками.
 - Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/areas`, `/output`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
@@ -42,17 +44,21 @@ bash deploy_telegram_bot.sh --providers all
 - TTL-кеш scene-search, чтобы минимизировать STAC/provider API calls.
 - Общий raster cache: один и тот же product/asset/AOI не скачивается повторно.
 - Автоматическая сборка land/shoreline mask из URL или локального ZIP/SHP/GeoJSON.
-- Local-CFAR detector с physical scale, local contrast, shape metrics и confidence provenance.
-- Консервативная wake-axis association вокруг каждого судна через Canny+Hough; heading сохраняется с флагом неоднозначности 180°.
-- Experimental wake speed enrichment: wavelength по cross-axis profile peaks, скорость по deep-water Kelvin approximation, результат помечен experimental.
-- AIS enrichment: ближайший интерполированный AIS track point, MMSI/distance/SOG/COG в validation/metadata, AIS track overlay на overview/crop.
-- Overview PNG с точками/номерами судов, wake axis и AIS track при наличии.
-- Crop PNG по каждому найденному судну, включая wake-axis и AIS-track overlay при наличии.
+- Local-CFAR-style candidate detector с physical scale, local contrast и shape metrics; `confidence` — ranking score, не вероятность.
+- Экспериментальная wake-axis association через Canny+Hough; heading сохраняется с флагом неоднозначности 180° и не является подтверждённым курсом без QC.
+- Experimental wake speed proxy по cross-axis profile peaks и deep-water Kelvin approximation; не является оперативной скоростью.
+- AIS enrichment: интерполированный reference track point, MMSI/distance/SOG/COG в validation/metadata и AIS overlay.
+- Overview PNG с точками/номерами кандидатов, wake axis и AIS track при наличии.
+- Crop PNG по каждому кандидату, включая wake-axis и AIS-track overlay при наличии.
 - Вывод GeoJSON, CSV, Parquet и `report.json`.
 
 ## Что пока не реализовано
 
 - Lock-файлы для конкурентного скачивания одного raster asset.
+- Актуальный CDSE STAC v1 provider contract и OData fallback.
+- Калиброванный vessel detector, benchmark, uncertainty и физическая validation.
+- Интеграция effective `config/processing.yaml` в CLI/Telegram pipeline.
+- Правильный guard-cell CFAR и sensor-specific S1/S2 preprocessing.
 - Полноценный Sentinel-2 band stack B02/B03/B04/B08 + SCL/cloud/water mask.
 - Обработка ASF ZIP/GRD через SNAP/pyroSAR.
 

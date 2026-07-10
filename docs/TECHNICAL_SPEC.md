@@ -1,178 +1,241 @@
-# Техническое задание: Marine Track MVP
+# Техническое задание: Marine Track MVP-0.2
 
-## 1. Назначение
+## 1. Назначение и границы
 
-Marine Track MVP предназначен для автоматического определения положения, курса и скорости судов по открытым спутниковым данным. Базовая задача первого этапа — не полная классификация судов, а надежный конвейер:
+Marine Track — воспроизводимый конвейер поиска спутниковых сцен и формирования геопривязанных **кандидатов судов** на морской акватории. До прохождения benchmark результат не называется гарантированной детекцией судна.
 
-1. найти подходящие сцены по AOI и времени;
-2. загрузить или подготовить сцену;
-3. обнаружить кандидаты судов;
-4. обнаружить кильватерный след, если он выражен;
-5. рассчитать положение и направление;
-6. рассчитать скорость только валидным методом;
-7. сохранить результат и параметры валидации.
+Обязательная цель MVP-0.2:
 
-## 2. Приоритет источников
+```text
+AOI + UTC interval → processable raster scene → sensor-aware preprocessing → candidate objects → optional wake evidence → provenance/QC outputs
+```
 
-### Sentinel-1 SAR
+В MVP-0.2 не входят как подтверждённые продукты:
 
-Основной источник MVP. Используется для круглосуточной и всепогодной детекции.
+- глобальная realtime-система;
+- классификация типа/размера судна с гарантированной точностью;
+- оперативная скорость по одной сцене;
+- ML-детектор без benchmark и baseline;
+- Sentinel-2 multi-band stack до завершения S1 baseline;
+- обработка ASF SAFE/GRD, пока не существует отдельного materializer/processor.
 
-Fallback-порядок:
-
-1. `asf` — NASA Alaska Satellite Facility, пакет `asf_search`.
-2. `copernicus_cdse` — Copernicus Data Space Ecosystem STAC/OData.
-3. `planetary_computer` — STAC-каталог Microsoft Planetary Computer.
-4. `earthsearch` — STAC-каталог Element84, если коллекция доступна.
-
-### Sentinel-2 MSI
-
-Второй источник. Используется только при приемлемой облачности и дневной съемке.
-
-Fallback-порядок:
-
-1. `copernicus_cdse`.
-2. `planetary_computer`.
-3. `sentinelhub`.
-4. `earthsearch`.
-
-### Вспомогательные данные
-
-- Copernicus Marine: течения, волны, ветер, SST.
-- AIS: NOAA MarineCadastre, Global Fishing Watch, локальный приемник AIS.
-
-## 3. Функциональные требования
-
-### FR-1. Конфигурация запуска
+## 2. Входные данные
 
 Система принимает:
 
-- AOI в GeoJSON;
-- время `from/to` в UTC;
-- сенсор: `auto`, `sentinel1`, `sentinel2`;
-- выходной каталог;
-- параметры облачности, поляризации, режима съемки.
+- AOI GeoJSON в EPSG:4326; допускаются Polygon/MultiPolygon, Feature и FeatureCollection;
+- `start/end` в UTC;
+- sensor: `auto`, `sentinel1`, `sentinel2`;
+- max results, cloud/polarization/beam filters;
+- output/cache directories;
+- optional AIS dataset и ocean-context dataset.
 
-### FR-2. Поиск сцен
+AOI должен быть валидирован, а antimeridian/полярные области должны либо поддерживаться явно, либо отклоняться с понятной ошибкой.
 
-Система должна пробовать провайдеры по порядку. Если провайдер недоступен или вернул пустой результат, включается следующий.
+## 3. Data/provider contract
 
-### FR-3. Предобработка
+### 3.1. Sentinel-1 — основной канал
 
-Sentinel-1:
+Приоритет — processable GRD/RTC COG с provenance и единицами измерения. CDSE STAC contract:
 
-- выбор поляризации;
-- вырезка AOI;
-- маска суши/берега;
-- подавление спекл-шума;
-- нормализация интенсивности.
+```text
+CDSE_STAC_URL=https://stac.dataspace.copernicus.eu/v1/
+collection=sentinel-1-grd
+```
 
-Sentinel-2:
+Резервный поиск/скачивание:
 
-- загрузка B02/B03/B04/B08;
-- cloud mask;
-- water mask;
-- ресемплинг к 10 м;
-- локальный контраст.
+```text
+CDSE_ODATA_URL=https://catalogue.dataspace.copernicus.eu/odata/v1/Products
+```
 
-### FR-4. Детекция судов
+Planetary Computer S1 RTC/GRD используется как optional raster fallback при успешной авторизации/подписании asset. ASF в текущем MVP считается search/preview/archive provider до реализации SAFE/GRD processing.
 
-MVP-методы:
+### 3.2. Sentinel-2 — второй канал
 
-- SAR: адаптивный порог/CFAR, connected components, фильтр по площади и форме.
-- Optical: порог по яркости/контрасту, water/cloud mask, connected components.
+Актуальная CDSE STAC collection:
 
-ML-детектор не обязателен для первого MVP.
+```text
+collection=sentinel-2-l2a
+```
 
-### FR-5. Детекция следа
+В полном optical pipeline требуются B02/B03/B04/B08, единый CRS/resolution, SCL/cloud/shadow/water mask и provenance по каждой полосе. До этого отдельный single-band asset не считается полноценной Sentinel-2 детекцией.
 
-Для каждого кандидата берется окно 1–5 км.
+### 3.3. Auxiliary data
 
-Методы:
+- local AIS — reference/validation;
+- NOAA MarineCadastre — историческая AIS для US waters, не глобальный realtime;
+- Copernicus Marine — currents/waves/wind/SST context, только с dataset id, units и temporal interpolation;
+- Natural Earth — land/shoreline geometry, не замена точной water mask.
 
-- локальное контрастирование;
-- edge/ridge enhancement;
-- Hough/Radon transform;
-- выделение центральной оси турбулентного следа;
-- выделение Kelvin arms, если они видны.
+Провайдеры обязаны сообщать capability: `search`, `preview`, `raster`, `archive`, `auth_required`.
 
-### FR-6. Положение
+## 4. Scene/provenance requirements
 
-Приоритет методов:
+Каждая выбранная сцена должна сохранять:
 
-1. centroid корпуса;
-2. вершина V-shaped wake;
-3. вероятный сектор по оси следа, если корпус не виден.
+- provider, endpoint/profile и collection;
+- product id, acquisition start/end, orbit/platform, mode/polarization;
+- selected asset key, media type, href scheme и download status;
+- CRS, transform, width/height, GSD/pixel scale;
+- band name, units/calibration level, nodata;
+- AOI geometry/hash и факт crop;
+- processing config, code commit и package/runtime versions.
 
-### FR-7. Курс
+Preview, thumbnail и archive нельзя передавать detector как raster asset. При отсутствии processable asset pipeline возвращает typed error, а не пустой успешный результат.
 
-Приоритет методов:
+## 5. Preprocessing
 
-1. wake axis;
-2. ориентация корпуса;
-3. Sentinel-2 inter-band displacement;
-4. AIS только для проверки.
+### Sentinel-1
 
-Если есть только вытянутый корпус без следа, фиксируется неоднозначность 180°.
+1. Проверить calibration/unit contract: DN/amplitude/sigma0/gamma0/dB.
+2. Выполнить valid/nodata/water/land/shoreline mask.
+3. Применить документированный speckle/clutter preset.
+4. Работать в физически согласованной шкале, сохраняя исходные units.
+5. Для больших raster использовать tiles/overlap и deterministic merge.
 
-### FR-8. Скорость
+### Sentinel-2
 
-Скорость считается только при наличии физически валидного признака.
+1. Собрать B02/B03/B04/B08 и привести к единой сетке.
+2. Исключить cloud, cirrus, shadow, invalid, land и glint pixels.
+3. Сформировать optical features/ratios.
+4. Не смешивать optical score с S1 score без sensor-specific calibration.
 
-Методы MVP:
+## 6. Candidate detector
 
-1. `sentinel2_interband_displacement`: смещение судна между каналами Sentinel-2.
-2. `kelvin_wavelength`: скорость через длину волны в Kelvin wake.
-3. `sar_offset_experimental`: только как экспериментальный флаг, не как основной метод.
+В MVP допускается classical detector, но он должен быть честно описан как `vessel_candidate`.
 
-Если метод неприменим, выводится `speed_method = not_estimated`.
+Минимальный алгоритм S1:
 
-### FR-9. Валидация
+1. robust local clutter estimate;
+2. guard-cell CFAR или эквивалентный явно документированный robust threshold;
+3. connected components;
+4. min/max physical area, valid fraction и edge/shoreline rejection;
+5. features объекта и evidence score;
+6. tile-overlap deduplication.
 
-Виды валидации:
+Обязательные признаки:
 
-- AIS: интерполяция трека к моменту снимка, ошибки положения/курса/скорости.
-- Физическая: проверка диапазонов скоростей, геометрии следа, согласованности направления.
-- Кросс-сенсорная: согласование Sentinel-1 и Sentinel-2, если есть близкие сцены.
+- centroid, bbox, area/diameter;
+- length/width, elongation, compactness, solidity;
+- local CNR/background scale/peak;
+- pixel scale/GSD и uncertainty;
+- distance to land/AOI edge, water fraction;
+- sensor/polarization/incidence/orbit metadata;
+- detector parameter stability.
 
-## 4. Выходные данные
+`evidence_score` — ranking feature. Поле `vessel_probability` появляется только после calibration split.
+
+## 7. Wake and heading
+
+Wake analysis выполняется в отдельном water-only crop:
+
+- suppress land, borders and nodata;
+- find line hypotheses with Canny/Hough/Radon;
+- test line length/continuity/contrast and vessel-relative sector;
+- separately test central turbulent wake and Kelvin arms;
+- compute arm/angle/vertex/symmetry residuals;
+- return `wake_score`, QC flags and angular uncertainty.
+
+Если direction cannot be resolved, `heading_deg` may contain an axis, но `heading_ambiguity_deg=180` и `heading_method` обязаны явно это отражать. При непрохождении QC курс не выдаётся.
+
+## 8. Speed policy
+
+По умолчанию:
+
+```text
+speed_method=not_estimated
+```
+
+### AIS
+
+AIS SOG/COG — внешний reference. Сохраняются MMSI, position/time gap, distance, interpolation interval, number of points и match status. AIS не должен незаметно маскировать отсутствие собственной оценки.
+
+### Sentinel-2 inter-band
+
+Метод допустим только после учёта реальных band time delays, push-broom geometry, registration и subpixel matching. Он относится к optical research stage.
+
+### Kelvin wavelength
+
+Формула глубокой воды:
+
+```text
+V = sqrt(g * Lmax / (2*pi))
+```
+
+может использоваться только при подтверждённых transverse/Kelvin waves, достаточном числе разрешённых длин волн, проверке глубины/sea-state/current и наличии uncertainty. Текущий cross-axis peak estimator является research proxy:
+
+```text
+speed_proxy_knots = ...
+speed_method = kelvin_wavelength_experimental
+```
+
+До benchmark это поле не должно попадать в основной Telegram summary как оперативная скорость.
+
+## 9. Validation
+
+Статусы:
+
+```text
+unvalidated | matched | unmatched | ambiguous | stale | rejected_physics | confirmed
+```
+
+Физические проверки должны быть реально вызваны pipeline и сохранять причину:
+
+- диапазон/uncertainty скорости;
+- heading alignment с 180°-aware circular difference;
+- wake geometry consistency;
+- current/depth/sea-state applicability;
+- AIS temporal/spatial quality.
+
+## 10. Outputs
 
 Обязательные:
 
-- GeoJSON с детекциями;
-- Parquet/CSV для аналитики;
-- quicklook PNG;
-- HTML-отчет по сцене;
-- JSON с конфигом запуска и provenance.
+- `detections.geojson` — Point features и свойства evidence/QC;
+- `detections.csv` и `detections.parquet`;
+- `overview.png` и candidate crops;
+- `report.json` с provenance, effective config, errors, QC и artifact paths.
 
-Минимальный объект GeoJSON:
+HTML-отчёт не является требованием MVP-0.2 и планируется отдельно после стабилизации JSON schema/UI.
+
+Минимальное свойство candidate:
 
 ```json
 {
-  "type": "Feature",
-  "geometry": {"type": "Point", "coordinates": [37.0, 44.0]},
-  "properties": {
-    "detection_id": "S1_20260706_000001",
-    "satellite": "sentinel-1",
-    "provider": "asf",
-    "product_id": "S1A_IW_GRDH_...",
-    "acquisition_time": "2026-07-06T08:13:21Z",
-    "heading_deg": 82.4,
-    "heading_method": "wake_axis",
-    "speed_knots": null,
-    "speed_method": "not_estimated",
-    "confidence": 0.68,
-    "validation_status": "unvalidated"
-  }
+  "detection_id": "S1_20260710_000001",
+  "candidate_status": "candidate",
+  "satellite": "sentinel1",
+  "provider": "copernicus_cdse",
+  "product_id": "...",
+  "acquisition_time": "2026-07-10T08:13:21Z",
+  "ship_score": 0.68,
+  "wake_score": null,
+  "quality_score": 0.71,
+  "uncertainty_m": null,
+  "heading_deg": null,
+  "speed_knots": null,
+  "speed_method": "not_estimated",
+  "validation_status": "unvalidated",
+  "quality_flags": ["single_band", "no_ais"]
 }
 ```
 
-## 5. Критерии приемки MVP
+## 11. Критерии приёмки
 
-1. По AOI и времени находятся сцены хотя бы через один fallback-источник.
-2. Формируется GeoJSON с кандидатами.
-3. Для каждого кандидата сохраняются координаты, время, источник, product id и confidence.
-4. При наличии следа рассчитывается направление.
-5. Скорость считается только валидным методом или явно не считается.
-6. Валидация сохраняет ошибки и статус.
-7. Все результаты воспроизводимы по конфигу и product id.
+### Engineering
+
+1. pytest/ruff/bash syntax/clean install/core runtime check проходят.
+2. CDSE/PC/ASF provider contracts покрыты offline tests.
+3. Одни и те же `product_id + asset + config + code_commit` дают воспроизводимый результат.
+4. Cache download atomic, concurrent duplicate download prevented.
+5. При provider/materializer failure пользователь получает типизированную причину.
+
+### Scientific
+
+1. Есть fixed scene manifest, label schema, negative scenes и spatial/temporal holdout.
+2. Report публикует POD/FAR/CSI/precision/recall/F1, false alarms/km² и localization error.
+3. Wake публикует detection/false-wake rate и angular error.
+4. Speed публикует bias/MAE/RMSE/coverage only for applicable paired samples.
+5. Метрики стратифицированы по sensor/polarization/incidence/wind/depth/coast/open sea/day-night.
+6. Новая версия сравнивается с classical baseline и имеет confidence intervals.
