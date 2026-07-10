@@ -1,0 +1,54 @@
+name: Finalize live canary hardening
+
+on:
+  push:
+    branches:
+      - agent/live-canary-selftest-20260710
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-canary-selftest-20260710
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply hardening
+        run: python scripts/agent_live_canary_hardening.py
+      - name: Validate
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+          ruff check --fix src tests runtime_check.py
+          python -m compileall -q src runtime_check.py
+          bash -n install_telegram_bot.sh deploy_telegram_bot.sh
+          ruff check src tests runtime_check.py
+          pytest -q
+      - name: Commit tested hardening
+        run: |
+          rm -f scripts/agent_live_canary_hardening.py
+          rm -f .github/workflows/agent-live-canary-hardening.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --cached --quiet; then
+            echo 'No hardening changes found.' >&2
+            exit 1
+          fi
+          git commit -m 'Harden live canary redaction and job serialization'
+          git push origin HEAD:agent/live-canary-selftest-20260710
+      - name: Publish diagnostics
+        if: failure()
+        run: |
+          gh pr comment 28 --body 'Live canary hardening failed. Inspect this workflow run for the exact lint or test stage.' || true
