@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pyproj import Geod
 from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, shape
 from shapely.ops import unary_union
 
+DEFAULT_PROCESSING_CONFIG = Path("config/processing.yaml")
 DEFAULT_MAX_AOI_AREA_KM2 = 25_000.0
 DEFAULT_MAX_AOI_VERTICES = 5_000
 DEFAULT_MAX_RASTER_PIXELS = 2_000_000_000
@@ -38,27 +41,66 @@ class AOIMetrics:
     geometry_count: int
 
 
-def load_resource_limits() -> ResourceLimits:
+def load_resource_limits(config_path: str | Path | None = None) -> ResourceLimits:
+    """Resolve YAML baseline followed by non-empty environment overrides.
+
+    This mirrors the effective processing configuration contract so AOI rejection,
+    raster workload checks and provenance cannot silently disagree about limits.
+    A missing configuration file falls back to conservative built-in defaults;
+    a present but malformed file fails closed.
+    """
+
+    configured = _load_yaml_limits(config_path)
+    max_aoi_area_km2 = _config_float(
+        configured,
+        "max_aoi_area_km2",
+        DEFAULT_MAX_AOI_AREA_KM2,
+        minimum=0.001,
+    )
+    max_aoi_vertices = _config_int(
+        configured,
+        "max_aoi_vertices",
+        DEFAULT_MAX_AOI_VERTICES,
+        minimum=4,
+    )
+    max_raster_pixels = _config_int(
+        configured,
+        "max_raster_pixels",
+        DEFAULT_MAX_RASTER_PIXELS,
+        minimum=1,
+    )
+    max_tiles = _config_int(
+        configured,
+        "max_tiles",
+        DEFAULT_MAX_TILES,
+        minimum=1,
+    )
+    max_candidates = _config_int(
+        configured,
+        "max_candidates",
+        DEFAULT_MAX_CANDIDATES,
+        minimum=1,
+    )
     return ResourceLimits(
         max_aoi_area_km2=_env_float(
             "MARINE_TRACK_MAX_AOI_AREA_KM2",
-            DEFAULT_MAX_AOI_AREA_KM2,
+            max_aoi_area_km2,
             minimum=0.001,
         ),
         max_aoi_vertices=_env_int(
             "MARINE_TRACK_MAX_AOI_VERTICES",
-            DEFAULT_MAX_AOI_VERTICES,
+            max_aoi_vertices,
             minimum=4,
         ),
         max_raster_pixels=_env_int(
             "MARINE_TRACK_MAX_RASTER_PIXELS",
-            DEFAULT_MAX_RASTER_PIXELS,
+            max_raster_pixels,
             minimum=1,
         ),
-        max_tiles=_env_int("MARINE_TRACK_MAX_TILES", DEFAULT_MAX_TILES, minimum=1),
+        max_tiles=_env_int("MARINE_TRACK_MAX_TILES", max_tiles, minimum=1),
         max_candidates=_env_int(
             "MARINE_TRACK_MAX_CANDIDATES",
-            DEFAULT_MAX_CANDIDATES,
+            max_candidates,
             minimum=1,
         ),
     )
@@ -186,6 +228,26 @@ def estimated_tile_count(
     return int(rows * columns)
 
 
+def _load_yaml_limits(config_path: str | Path | None) -> dict[str, Any]:
+    resolved = (
+        Path(config_path)
+        if config_path is not None
+        else Path(os.getenv("MARINE_TRACK_PROCESSING_CONFIG", str(DEFAULT_PROCESSING_CONFIG)))
+    )
+    if not resolved.is_file():
+        return {}
+    try:
+        payload = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise ResourceLimitError(f"Processing config cannot be read: {resolved}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ResourceLimitError(f"Processing config must be a mapping: {resolved}")
+    configured = payload.get("resource_limits") or {}
+    if not isinstance(configured, dict):
+        raise ResourceLimitError(f"resource_limits must be a mapping: {resolved}")
+    return configured
+
+
 def _extract_geometries(payload: dict[str, Any]) -> list[dict[str, Any]]:
     geo_type = payload.get("type")
     if geo_type == "FeatureCollection":
@@ -206,7 +268,7 @@ def _extract_geometries(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [payload] if isinstance(geo_type, str) else []
 
 
-def _iter_coordinate_pairs(value: Any):
+def _iter_coordinate_pairs(value: Any) -> Iterator[tuple[float, float]]:
     if isinstance(value, dict):
         coordinates = value.get("coordinates")
         if coordinates is not None:
@@ -244,6 +306,49 @@ def _geodesic_area_m2(geometry: Any) -> float:
         f"AOI geometry must be polygonal, got "
         f"{getattr(geometry, 'geom_type', type(geometry).__name__)}"
     )
+
+
+def _config_int(
+    mapping: dict[str, Any],
+    key: str,
+    default: int,
+    *,
+    minimum: int,
+) -> int:
+    value = mapping.get(key, default)
+    if isinstance(value, bool):
+        raise ResourceLimitError(f"resource_limits.{key} must be an integer")
+    try:
+        parsed = int(value)
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ResourceLimitError(f"resource_limits.{key} must be an integer") from exc
+    if not math.isfinite(numeric) or numeric != parsed:
+        raise ResourceLimitError(f"resource_limits.{key} must be an integer")
+    if parsed < minimum:
+        raise ResourceLimitError(f"resource_limits.{key} must be >= {minimum}, got {parsed}")
+    return parsed
+
+
+def _config_float(
+    mapping: dict[str, Any],
+    key: str,
+    default: float,
+    *,
+    minimum: float,
+) -> float:
+    value = mapping.get(key, default)
+    if isinstance(value, bool):
+        raise ResourceLimitError(f"resource_limits.{key} must be numeric")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ResourceLimitError(f"resource_limits.{key} must be numeric") from exc
+    if not math.isfinite(parsed) or parsed < minimum:
+        raise ResourceLimitError(
+            f"resource_limits.{key} must be finite and >= {minimum}, got {parsed}"
+        )
+    return parsed
 
 
 def _env_int(name: str, default: int, *, minimum: int) -> int:
