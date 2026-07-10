@@ -41,6 +41,46 @@ jobs:
             python scripts/agent_effective_config_provenance.py > migration.txt 2>&1
             status=$?
           fi
+          if [ "$status" = "0" ]; then
+            python - <<'PY'
+          from pathlib import Path
+          path = Path('src/marine_track/detection_pipeline.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('import json\n', '', 1)
+          text = text.replace(
+              '''    effective_config = load_effective_detector_config(
+                  materialized.scene.sensor,
+                  **detector_kwargs,
+              )
+          ''',
+              '''    effective_config = load_effective_detector_config(
+                  materialized.scene.sensor,
+                  threshold_sigma=threshold_sigma,
+                  min_area_px=min_area_px,
+                  max_area_px=max_area_px,
+                  local_window_px=local_window_px,
+                  guard_window_px=guard_window_px,
+                  min_contrast_sigma=min_contrast_sigma,
+              )
+          ''',
+          )
+          text = text.replace(
+              '''        threshold_sigma=threshold_sigma,
+                  min_area_px=min_area_px,
+                  max_area_px=max_area_px,
+                  local_window_px=local_window_px,
+                  guard_window_px=guard_window_px,
+                  min_contrast_sigma=min_contrast_sigma,
+                  land_mask_geojson=land_mask_geojson,
+          ''',
+              '''        **detector_kwargs,
+                  land_mask_geojson=land_mask_geojson,
+          ''',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+          fi
           echo "$status" > migration.exit
           cat migration.txt
           if [ "$status" = "0" ]; then
@@ -50,7 +90,7 @@ jobs:
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add . ':!scripts/agent_effective_config_provenance.py' ':!.github/workflows/ci.yml' ':!migration.txt' ':!migration.exit'
             if ! git diff --cached --quiet; then
-              git commit -m 'Use effective processing config and redacted provenance'
+              git commit -m 'Fix effective detector config wiring'
               git push origin HEAD:agent/effective-config-provenance-20260710
             fi
           fi
