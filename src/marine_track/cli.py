@@ -22,6 +22,7 @@ from marine_track.land_mask_update import update_land_mask as build_land_mask
 from marine_track.models import Sensor
 from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.pipeline import parse_utc_datetime, run_search_stage, search_scenes_with_fallback
+from marine_track.processing_config import load_effective_detector_config
 from marine_track.raster_detection import detect_candidates_from_raster
 
 app = typer.Typer(help="Marine Track MVP: vessel and ship-wake detection from satellite imagery")
@@ -97,29 +98,51 @@ def run(
 def detect_raster(
     raster: Path = typer.Option(..., exists=True, readable=True, help="Single-band GeoTIFF path"),
     output: Path = typer.Option(Path("runs/latest/detections.geojson")),
-    satellite: str = typer.Option("unknown"),
+    satellite: Sensor = typer.Option(Sensor.SENTINEL1),
     provider: str = typer.Option("local"),
     product_id: str = typer.Option("local-raster"),
     acquisition_time: str = typer.Option(..., help="UTC acquisition time"),
-    threshold_sigma: float = typer.Option(3.5),
-    min_area_px: int = typer.Option(2),
-    max_area_px: int = typer.Option(5000),
+    threshold_sigma: float | None = typer.Option(None),
+    min_area_px: int | None = typer.Option(None),
+    max_area_px: int | None = typer.Option(None),
+    local_window_px: int | None = typer.Option(None),
+    guard_window_px: int | None = typer.Option(None),
+    min_contrast_sigma: float | None = typer.Option(None),
 ) -> None:
-    """Detect bright vessel candidates in one local georeferenced raster band."""
-    detections = detect_candidates_from_raster(
-        path=raster,
-        satellite=satellite,
-        provider=provider,
-        product_id=product_id,
-        acquisition_time=parse_utc_datetime(acquisition_time),
+    """Detect bright candidates using the same effective config as Telegram."""
+    effective = load_effective_detector_config(
+        satellite,
         threshold_sigma=threshold_sigma,
         min_area_px=min_area_px,
         max_area_px=max_area_px,
+        local_window_px=local_window_px,
+        guard_window_px=guard_window_px,
+        min_contrast_sigma=min_contrast_sigma,
+    )
+    detections = detect_candidates_from_raster(
+        path=raster,
+        satellite=satellite.value,
+        provider=provider,
+        product_id=product_id,
+        acquisition_time=parse_utc_datetime(acquisition_time),
+        **effective.detector_kwargs(),
     )
     write_geojson(detections, output)
     write_csv(detections, output.with_suffix(".csv"))
     write_parquet(detections, output.with_suffix(".parquet"))
-    console.print(f"[green]Saved {len(detections)} detections to {output}[/green]")
+    console.print(
+        f"[green]Saved {len(detections)} candidates to {output}[/green] "
+        f"config={effective.config_hash[:12]}"
+    )
+
+
+@app.command("effective-config")
+def effective_config_command(
+    sensor: Sensor = typer.Option(Sensor.SENTINEL1),
+) -> None:
+    """Print validated detector parameters and reproducibility hash."""
+    effective = load_effective_detector_config(sensor)
+    console.print_json(data=effective.as_report_dict())
 
 
 @app.command("calibration-generate-tiles")

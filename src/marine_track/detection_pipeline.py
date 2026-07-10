@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import os
 from collections.abc import Callable
@@ -20,6 +19,12 @@ from marine_track.geospatial import (
 )
 from marine_track.models import HeadingMethod, SpeedMethod, VesselDetection
 from marine_track.output import write_csv, write_geojson, write_parquet
+from marine_track.processing_config import EffectiveDetectorConfig, load_effective_detector_config
+from marine_track.provenance import (
+    build_reproducibility_manifest,
+    safe_path_reference,
+    write_redacted_json,
+)
 from marine_track.raster_detection import detect_candidates_from_raster
 from marine_track.rendering.overview import render_overview
 from marine_track.rendering.vessel_crop import render_vessel_crop
@@ -72,11 +77,11 @@ def run_detection_for_token(
     owner_user_id: int,
     owner_chat_id: int,
     max_crops: int = 10,
-    threshold_sigma: float = 3.5,
-    min_area_px: int = 2,
-    max_area_px: int = 5000,
-    local_window_px: int = 31,
-    guard_window_px: int = 5,
+    threshold_sigma: float | None = None,
+    min_area_px: int | None = None,
+    max_area_px: int | None = None,
+    local_window_px: int | None = None,
+    guard_window_px: int | None = None,
     min_contrast_sigma: float | None = None,
     land_mask_geojson: str | Path | None = None,
     shoreline_buffer_m: float = 0.0,
@@ -84,12 +89,6 @@ def run_detection_for_token(
 ) -> DetectionRunResult:
     run_dir = output_dir / "detections" / token
     run_dir.mkdir(parents=True, exist_ok=True)
-    min_contrast_sigma = min_contrast_sigma if min_contrast_sigma is not None else env_float(
-        "MARINE_TRACK_DETECTION_MIN_CONTRAST_SIGMA",
-        0.0,
-        0.0,
-        100.0,
-    )
 
     report_progress(progress_callback, "2/5 materialize · подготовка GeoTIFF/COG")
     materialized = materialize_scene_from_token(
@@ -98,6 +97,16 @@ def run_detection_for_token(
         owner_user_id=owner_user_id,
         owner_chat_id=owner_chat_id,
     )
+    effective_config = load_effective_detector_config(
+        materialized.scene.sensor,
+        threshold_sigma=threshold_sigma,
+        min_area_px=min_area_px,
+        max_area_px=max_area_px,
+        local_window_px=local_window_px,
+        guard_window_px=guard_window_px,
+        min_contrast_sigma=min_contrast_sigma,
+    )
+    detector_kwargs = effective_config.detector_kwargs()
 
     report_progress(progress_callback, "3/5 detect · CFAR, scale, shape, wake/AIS")
     detections = detect_candidates_from_raster(
@@ -106,12 +115,7 @@ def run_detection_for_token(
         provider=materialized.provider,
         product_id=materialized.scene.product_id,
         acquisition_time=materialized.scene.acquisition_time,
-        threshold_sigma=threshold_sigma,
-        min_area_px=min_area_px,
-        max_area_px=max_area_px,
-        local_window_px=local_window_px,
-        guard_window_px=guard_window_px,
-        min_contrast_sigma=min_contrast_sigma,
+        **detector_kwargs,
         land_mask_geojson=land_mask_geojson,
         shoreline_buffer_m=shoreline_buffer_m,
     )
@@ -135,12 +139,7 @@ def run_detection_for_token(
         materialized,
         detections,
         crop_pngs,
-        threshold_sigma=threshold_sigma,
-        min_area_px=min_area_px,
-        max_area_px=max_area_px,
-        local_window_px=local_window_px,
-        guard_window_px=guard_window_px,
-        min_contrast_sigma=min_contrast_sigma,
+        effective_config=effective_config,
         land_mask_geojson=land_mask_geojson,
         shoreline_buffer_m=shoreline_buffer_m,
     )
@@ -388,54 +387,57 @@ def write_report_json(
     materialized: MaterializedScene,
     detections: list[VesselDetection],
     crop_pngs: list[Path],
-    threshold_sigma: float,
-    min_area_px: int,
-    max_area_px: int,
-    local_window_px: int,
-    guard_window_px: int,
-    min_contrast_sigma: float,
+    effective_config: EffectiveDetectorConfig,
     land_mask_geojson: str | Path | None,
     shoreline_buffer_m: float,
 ) -> Path:
+    output_dir = path.parents[2]
+    detector = effective_config.as_report_dict()
+    detector.update(
+        confidence_formula=(
+            "ranking score; heuristic or explicitly promoted calibration profile, not probability"
+        ),
+        land_mask_reference=safe_path_reference(land_mask_geojson, output_dir),
+        shoreline_buffer_m=shoreline_buffer_m,
+    )
     payload = {
+        "schema_version": 2,
         "token": token,
         "provider": materialized.provider,
         "sensor": materialized.sensor,
         "product_id": materialized.scene.product_id,
         "acquisition_time": materialized.scene.acquisition_time.isoformat(),
         "raster_key": materialized.raster_key,
-        "raster_path": str(materialized.raster_path),
+        "raster_reference": safe_path_reference(materialized.raster_path, output_dir),
         "raster_cache_hit": materialized.cache_hit,
         "aoi_crop": materialized.cropped,
-        "detector": {
-            "name": "local_cfar" if local_window_px > 0 else "global_threshold",
-            "threshold_sigma": threshold_sigma,
-            "min_area_px": min_area_px,
-            "max_area_px": max_area_px,
-            "local_window_px": local_window_px,
-            "guard_window_px": guard_window_px,
-            "min_contrast_sigma": min_contrast_sigma,
-            "confidence_formula": "0.50*peak_score + 0.35*contrast_sigma/8 + 0.15*shape_elongation/5",
-            "land_mask_geojson": str(land_mask_geojson) if land_mask_geojson else None,
-            "shoreline_buffer_m": shoreline_buffer_m,
-        },
+        "detector": detector,
+        "reproducibility": build_reproducibility_manifest(
+            materialized,
+            effective_config,
+            output_dir=output_dir,
+        ),
         "wake_speed_enrichment": {
             "enabled": True,
             "experimental": True,
             "method": "cross_axis_profile_peaks + deep_water_kelvin_wavelength",
-            "note": "AIS SOG overrides this value when AIS match is available.",
+            "note": "Research proxy only; AIS remains a separate external reference.",
         },
         "ais_enrichment": {
             "enabled": bool(os.getenv("MARINE_TRACK_AIS_CSV", "").strip()),
-            "csv": os.getenv("MARINE_TRACK_AIS_CSV", "").strip() or None,
+            "csv_reference": safe_path_reference(
+                os.getenv("MARINE_TRACK_AIS_CSV", "").strip() or None,
+                output_dir,
+            ),
             "match_window_min": env_int("MARINE_TRACK_AIS_MATCH_WINDOW_MIN", 30, 1, 24 * 60),
             "track_window_min": env_int("MARINE_TRACK_AIS_TRACK_WINDOW_MIN", 60, 1, 24 * 60),
-            "max_distance_m": env_float("MARINE_TRACK_AIS_MAX_DISTANCE_M", 3000.0, 1.0, 100_000.0),
+            "max_distance_m": env_float(
+                "MARINE_TRACK_AIS_MAX_DISTANCE_M", 3000.0, 1.0, 100_000.0
+            ),
         },
         "detections_count": len(detections),
         "crop_count": len(crop_pngs),
         "detections": [detection.model_dump(mode="json") for detection in detections],
-        "crops": [str(path) for path in crop_pngs],
+        "crops": [safe_path_reference(item, output_dir) for item in crop_pngs],
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+    return write_redacted_json(path, payload, base_dir=output_dir)
