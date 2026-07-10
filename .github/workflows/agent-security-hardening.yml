@@ -35,3 +35,4 @@ jobs:
           fi
           git commit -m 'Harden Telegram access, scene tokens and search cache'
           git push origin HEAD:agent/security-cache-hardening-20260710
+# trigger: 2
