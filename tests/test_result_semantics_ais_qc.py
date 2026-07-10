@@ -9,7 +9,6 @@ from marine_track.ais import assign_detections_to_ais, interpolate_track_positio
 from marine_track.detection_pipeline import enrich_detections_with_ais
 from marine_track.models import HeadingMethod, SpeedMethod, VesselDetection
 
-
 ACQUISITION = datetime(2026, 7, 10, 12, 5, tzinfo=timezone.utc)
 
 

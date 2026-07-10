@@ -137,7 +137,10 @@ def test_detection_report_uses_effective_config_and_redacted_provenance(tmp_path
     )
     report_text = result.report_json.read_text(encoding="utf-8")
     report = json.loads(report_text)
-    assert report["schema_version"] == 2
+    assert report["schema_version"] == 3
+    assert report["result_type"] == "vessel_candidates"
+    assert report["candidates"]
+    assert result.runtime_state_json.is_file()
     assert report["detector"]["threshold_sigma"] == 1.0
     assert report["reproducibility"]["code"]["commit"] == "test-commit"
     assert report["reproducibility"]["scene"]["asset"]["units"] == "amplitude"
