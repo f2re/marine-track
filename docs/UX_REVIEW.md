@@ -136,5 +136,6 @@ id, label, sensor, west, south, east, north, hours, created_at, updated_at, use_
 
 ## Следующие UX-улучшения
 
-1. Добавить AIS track rendering на overview/crop.
-2. Добавить кнопку “повторить этот же bbox” прямо под результатом `/detectbbox` с режимами “детекция” и “только сроки”.
+1. Явно показывать `candidate`, `wake evidence`, `AIS reference`, `speed proxy` и `not estimated` разными статусами.
+2. Добавить к результату quality flags: берег/край, single-band, cloud/glint, AIS gap, wake ambiguity.
+3. Добавить кнопку “повторить этот же bbox” прямо под результатом `/detectbbox` с режимами “детекция” и “только сроки”.

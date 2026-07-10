@@ -45,23 +45,23 @@ bash install_telegram_bot.sh --providers core --yes
 | `all` | `.[providers]` | core + scene + aux |
 | `scene` | `.[scene-providers]` | core + scene |
 | `aux` | `.[aux-providers]` | core + aux |
-| `core` / `none` | `.` | only core |
+| `core` | `.` | only core |
 
 ## Интерактивная настройка ключей
 
 `install_telegram_bot.sh` при первичной установке делегирует настройку в `deploy_telegram_bot.sh`. В интерактивном режиме deploy проходит по активным провайдерам выбранного профиля, показывает краткую инструкцию и предлагает заполнить недостающие значения в `.env`. Уже заполненные значения не перезаписываются.
 
-Проверка provider readiness без сетевых запросов встроена в deploy. Она падает только при отсутствии установленных provider-модулей, выбранных профилем. Отсутствующие ключи показываются как предупреждения, чтобы можно было поставить сервис заранее и добавить доступы позже.
+Проверка provider configuration без сетевых запросов встроена в deploy. Она падает только при отсутствии установленных provider-модулей, выбранных профилем. Это import/config check, а не readiness: DNS, auth, quota, подписывание и чтение raster она не подтверждает. Перед operational release нужен отдельный live catalog + sign + range-read canary без записи secrets в лог.
 
 ## Scene providers
 
 | Provider | Sensor | Код | Доступ | Примечание |
 |---|---|---|---|---|
-| `asf` | Sentinel-1 | `marine_track.data_sources.asf_provider.ASFProvider` | Search без ключа, download через NASA Earthdata | Возвращает ASF product ZIP/preview; ZIP не обрабатывается как GeoTIFF в MVP detection. |
-| `copernicus_cdse` | Sentinel-1/2 | `marine_track.data_sources.stac_provider.STACProvider` | CDSE STAC, optional OAuth bearer | Поиск через `https://catalogue.dataspace.copernicus.eu/stac`. |
-| `planetary_computer` | Sentinel-1 RTC, Sentinel-2 L2A | `STACProvider` | Public STAC; asset signing через `planetary-computer` | Основной provider для `/detectbbox`, когда нужны COG/GeoTIFF assets. |
-| `earthsearch` | Sentinel-2 L2A | `STACProvider` | Public STAC | Только Sentinel-2. Sentinel-1/EarthSearch не включен в priority, чтобы не было ложной конфигурации. |
-| `sentinelhub` | Sentinel-1/2 | `marine_track.data_sources.sentinelhub_provider.SentinelHubProvider` | OAuth client credentials или access token | Реальный Sentinel Hub Catalog API provider. Не создает фейковых raster assets; показывает только то, что вернул Catalog. |
+| `asf` | Sentinel-1 | `marine_track.data_sources.asf_provider.ASFProvider` | Search без ключа, download через NASA Earthdata | Search/preview/archive; ZIP/GRD не обрабатывается как GeoTIFF в текущем detection MVP. |
+| `copernicus_cdse` | Sentinel-1/2 | `marine_track.data_sources.stac_provider.STACProvider` | CDSE STAC + asset-specific auth/alternates | Целевой endpoint `https://stac.dataspace.copernicus.eu/v1/`; текущий код требует migration и typed asset/auth/sidecar contract. |
+| `planetary_computer` | Sentinel-1 RTC/GRD, Sentinel-2 L2A | `STACProvider` | STAC discovery; asset signing/auth flow | SDK может работать без subscription key с более строгими лимитами, но конкретный S1 asset требует live sign/range-read preflight. |
+| `earthsearch` | Sentinel-2 L2A | `STACProvider` | Public HTTPS STAC/assets для текущей S2 конфигурации | Upstream имеет S1 GRD, но его `s3://` requester-pays materialization не поддержан и может требовать AWS credentials/cost. |
+| `sentinelhub` | Sentinel-1/2 | `marine_track.data_sources.sentinelhub_provider.SentinelHubProvider` | OAuth client credentials или access token | Catalog provider; не гарантирует direct processable COG и не считается бесплатным без проверки quota/contract. |
 
 ## Auxiliary providers
 
@@ -79,7 +79,7 @@ bash install_telegram_bot.sh --providers core --yes
 MARINE_TRACK_PROVIDER_PROFILE=all
 ```
 
-Допустимые значения: `all`, `scene`, `aux`, `core`, `none`. Значение управляет установкой и проверкой Python provider packages. Настройки доступа ниже всё равно можно хранить в `.env`; они будут использованы, когда соответствующий provider установлен.
+Допустимые значения: `all`, `scene`, `aux`, `core`. Значение управляет установкой и проверкой Python provider packages. Настройки доступа ниже всё равно можно хранить в `.env`; они будут использованы, когда соответствующий provider установлен.
 
 ### ASF / NASA Earthdata
 
@@ -95,6 +95,10 @@ EARTHDATA_TOKEN=
 
 ```text
 CDSE_ACCESS_TOKEN=
+CDSE_STAC_URL=https://stac.dataspace.copernicus.eu/v1/
+CDSE_STAC_SENTINEL1_COLLECTION=sentinel-1-grd
+CDSE_STAC_SENTINEL2_COLLECTION=sentinel-2-l2a
+CDSE_ODATA_URL=https://catalogue.dataspace.copernicus.eu/odata/v1/Products
 CDSE_TOKEN_URL=https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token
 CDSE_CLIENT_ID=cdse-public
 CDSE_CLIENT_SECRET=
@@ -102,15 +106,15 @@ CDSE_USERNAME=
 CDSE_PASSWORD=
 ```
 
-Как получить: создать аккаунт Copernicus Data Space Ecosystem. Если `CDSE_ACCESS_TOKEN` задан, он используется как bearer token. Если заданы `CDSE_USERNAME` и `CDSE_PASSWORD`, код получает token через OAuth password grant. По умолчанию используется public client `cdse-public`; при необходимости можно задать собственный client id/secret.
+Как получить: создать аккаунт Copernicus Data Space Ecosystem. Если `CDSE_ACCESS_TOKEN` задан, он используется как bearer token. Если заданы `CDSE_USERNAME` и `CDSE_PASSWORD`, код получает token через OAuth password grant. По умолчанию используется public client `cdse-public`; при необходимости можно задать собственный client id/secret. `CDSE_STAC_*` и `CDSE_ODATA_URL` — целевой provider contract; миграция к ним отмечена в `docs/IMPLEMENTATION_PLAN.md`.
 
 ### Planetary Computer
 
-Дополнительные credentials не требуются. Для assets используется библиотека `planetary-computer`, которая подписывает URL при materialization. Для этого нужен профиль `all` или `scene`.
+STAC discovery может быть публичным. Dataset page описывает account/API/SAS flow, а официальный SDK допускает anonymous use с более строгими rate limits. Для materialization обязателен live sign + range-read preflight конкретного asset; token/SAS query не сохраняется в report. Для этого нужен профиль `all` или `scene`.
 
 ### EarthSearch
 
-Дополнительные credentials не требуются. Используется публичный STAC endpoint Element84 EarthSearch v1. Для этого нужен профиль `all` или `scene`.
+Для текущего Sentinel-2 HTTPS path дополнительные credentials обычно не требуются; используется public best-effort STAC Element84 Earth Search v1. Upstream Sentinel-1 `s3://` requester-pays path в текущем materializer не поддержан и не считается credentials-free. Для provider нужен профиль `all` или `scene`.
 
 ### Sentinel Hub
 

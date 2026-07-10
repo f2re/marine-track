@@ -1,76 +1,123 @@
-# Научное основание MVP
+# Научное основание Marine Track
 
-## 1. Почему Sentinel-1 SAR является основным источником
+## 1. Научная постановка
 
-Sentinel-1 — C-band SAR-миссия Copernicus. Для морской задачи SAR принципиально важен: он работает ночью, через облака и реагирует на микрошероховатость поверхности моря. Именно поэтому Sentinel-1 используется как основной бесплатный источник для детекции судов, нефтяных пленок, волн и кильватерных структур.
+Спутниковая сцена не наблюдает «судно» напрямую как идеальный объект: наблюдаемый сигнал зависит от корпуса, волнения, ветра, угла визирования, поляризации, глубины, течения, обработки продукта и времени съёмки. Поэтому система должна разделять:
 
-В MVP Sentinel-1 используется для:
+```text
+object evidence → wake evidence → scene quality → validation/reference
+```
 
-- детекции ярких scatterer-объектов судна;
-- поиска центрального турбулентного следа;
-- поиска V-shaped/Kelvin wake;
-- оценки направления движения по оси следа.
+Это исключает подмену эвристического score вероятностью и не позволяет выдавать скорость при отсутствии физически применимого признака.
 
-## 2. SAR wake detection
+## 2. Sentinel-1 SAR
 
-Большинство классических методов обнаружения следов в SAR использует линейную структуру компонентов кильватерного следа. Типовой подход:
+Sentinel-1 C-band SAR работает днём/ночью и сквозь облачность, поэтому является основным каналом для ship-candidate detection. При этом SAR intensity зависит от sea clutter и условий наблюдения; яркий пик не равен судну автоматически. Входной продукт должен иметь известные units/calibration, polarization, incidence angle, orbit/mode и valid mask.
 
-1. улучшение контраста/подавление шума;
-2. перевод в пространство Radon или Hough;
-3. поиск пиков, соответствующих ярким/темным линиям;
-4. геометрическая проверка относительно положения судна.
+Базовый научный pipeline:
 
-Методы sparse regularization развивают эту идею: они усиливают линейные признаки в Radon-домене и подавляют шумовую компоненту. Для MVP достаточно начать с Hough/Radon и оставить sparse-методы как этап 2.
+1. calibration/unit normalization;
+2. water/land/shoreline and nodata mask;
+3. robust clutter estimate;
+4. guard-cell CFAR или эквивалентная модель с измеряемым false-alarm rate;
+5. object geometry and dual-pol/context features;
+6. rejection of coastline, ports, borders and invalid areas;
+7. independent validation on labels/AIS.
 
-## 3. Sentinel-2 optical/MSI
+CFAR в текущем коде является лишь local-CFAR-style эвристикой: фон включает target, а `guard_window_px` не реализует guard cells. Это должно быть исправлено до научной оценки.
 
-Sentinel-2 применим при отсутствии облачности и при дневной съемке. Он полезен для:
+## 3. Почему wake — отдельный признак
 
-- белой воды;
-- альбедо-аномалии;
-- оптического турбулентного следа;
-- оценки скорости по межканальному смещению.
+Кильватер состоит из разных физических компонентов: near-field turbulent/foam wake, transverse waves и divergent Kelvin arms. В SAR они могут быть яркими или тёмными и проявляться несимметрично. Поэтому один Hough line около centroid — только гипотеза.
 
-У движущегося судна положение в разных каналах Sentinel-2 может отличаться из-за нестрого одновременной регистрации каналов. Если известен временной сдвиг каналов и надежно определены центроиды, скорость оценивается как расстояние между центроидами, деленное на интервал времени.
+Для подтверждения wake нужны:
 
-## 4. Скорость по Kelvin wake
+- линия/полоса на достаточной длине;
+- continuity и устойчивость к scale/threshold;
+- связь с кандидатом в кормовом секторе;
+- contrast относительно локального sea clutter;
+- при наличии Kelvin arms — vertex/angle/arm symmetry;
+- suppression береговых и image-edge line features.
 
-При видимых поперечных волнах Kelvin wake можно оценить скорость судна относительно воды. В глубокой воде используется приближение:
+Radon/Hough и sparse-методы являются обоснованными направлениями для линейной структуры wake, но их результат требуется проверять относительно геометрии и условий сцены. [ESA описывает Radon-based SAR wake detection](https://earth.esa.int/eogateway/success-story/sar-synergy-data-for-maritime-surveillance/ship-wake-detection-using-sar), а обзор 2024 года систематизирует классические и deep-learning методы: [Mazzeo et al., 2024](https://www.mdpi.com/2072-4292/16/20/3775).
+
+## 4. Курс
+
+Ось wake может определить линию движения, но не всегда направление вдоль линии. Поэтому:
+
+- axis heading хранится с `180° ambiguity`;
+- направление «нос-корма» допускается только при подтверждённом vertex/asymmetry, hull orientation или внешнем reference;
+- heading error следует считать circular error, а не обычной разностью без обработки 0/360.
+
+## 5. Скорость по Kelvin wake
+
+Для глубокой воды дисперсионная связь даёт приближение:
 
 ```text
 V = sqrt(g * Lmax / (2*pi))
 ```
 
-где:
+где `Lmax` — измеренная длина волны, а `V` — скорость относительно воды в идеализированной постановке. На практике применимость ограничивают:
 
-- `V` — скорость судна относительно воды;
-- `g = 9.80665 м/с²`;
-- `Lmax` — максимальная измеренная длина волны в следе.
+- конечная глубина и bathymetry;
+- течение — разница speed through water/over ground;
+- wind-generated waves и sea-state;
+- угол визирования и азимутальная ориентация;
+- пространственное разрешение и число наблюдаемых периодов;
+- асимметрия/частичное исчезновение arm;
+- нелинейность, Froude regime и форма судна.
 
-Ограничения метода:
+Научные работы по wake speed используют спектральную/геометрическую структуру wake, а не произвольное расстояние между пиками одного поперечного профиля. См. [The speed and beam of a ship from its wake's SAR images](https://cris.tau.ac.il/en/publications/the-speed-and-beam-of-a-ship-from-its-wakes-sar-images) и обзор конечной глубины/волнения [Shugan et al., 2022](https://www.mdpi.com/2072-4292/14/7/926).
 
-- нужно достаточное число пикселей на длину волны;
-- нужны измеримые поперечные волны, а не только пена;
-- нужна проверка глубины или допущение глубоководности;
-- поверхностное течение меняет скорость относительно Земли.
+Поэтому текущая реализация `cross_axis_profile_peaks` должна интерпретироваться как `speed_proxy`, иметь uncertainty/quality flags и не использоваться для основного оперативного вывода. Течение корректируется как вектор, а не скалярным вычитанием: wake относится прежде всего к движению относительно воды, AIS SOG — относительно грунта.
 
-Если есть поле течений, скорость над грунтом может быть оценена как векторная сумма скорости относительно воды и течения.
+## 6. Sentinel-2
 
-## 5. Валидация
+Sentinel-2 MSI может быть полезен для оптического корпуса, пены, альбедо и Kelvin waves при дневной ясной сцене. Но bands снимаются push-broom детекторами с межканальными временными сдвигами; скорость через inter-band displacement требует реальных band delays, регистрации и геометрической модели. [Binet et al.](https://isprs-annals.copernicus.org/articles/V-1-2022/57/2022/) показывают, что знание задержек является существенным для динамических объектов.
 
-AIS используется для проверки, но не как безусловная истина. AIS может отсутствовать, запаздывать, содержать ошибки, отключаться или намеренно искажаться. Поэтому MVP валидирует результат тремя способами:
+До появления B02/B03/B04/B08 stack, SCL/cloud/shadow/water/glint mask и optical-specific QC текущий single-band путь нельзя считать полноценной Sentinel-2 методикой.
 
-1. AIS-сопоставление по времени и пространству.
-2. Физические проверки: допустимый диапазон скоростей, согласованность курса и следа, контрастность признака.
-3. Кросс-сенсорное подтверждение Sentinel-1/Sentinel-2.
+## 7. Валидация
 
-## 6. Основные источники
+AIS полезен, но не является безусловной истиной: возможны пропуски, latency, неверный MMSI, spatial mismatch и gaps. Для каждого match нужно хранить:
 
-- Copernicus Sentinel-1 mission documentation and Copernicus Data Space Ecosystem API documentation.
-- ASF SAR Data Search Manual and `asf_search` Python package documentation.
-- Karakuş, Rizaev, Achim. Ship Wake Detection in SAR Images via Sparse Regularization, 2019.
-- Yang, Karakuş, Achim. Detection of Ship Wakes in SAR Imagery Using Cauchy Regularisation, 2020.
-- Ma, Achim, Karakuş. Exploiting the Dual-Tree Complex Wavelet Transform for Ship Wake Detection in SAR Imagery, 2020.
-- Eldhuset-style SAR wake geometry and Radon/Hough family approaches.
-- Sentinel-2 moving ship speed estimation by inter-band displacement.
-- Copernicus Marine Toolbox documentation for currents, waves and SST fields.
+- временной gap и интервал интерполяции;
+- расстояние detection–AIS;
+- число точек track;
+- ambiguity среди нескольких MMSI;
+- max interpolation gap, one-to-one assignment и margin до второго match;
+- difference in heading/speed;
+- timestamp и provenance источника AIS.
+
+Независимая оценка должна включать manual labels и negative scenes. Соседние кадры одного прохода нельзя распределять между train и test. Результаты стратифицируются по sensor/polarization/incidence/wind/depth/coast/open sea/day-night.
+
+## 8. Метрики
+
+### Detection
+
+Precision, recall, F1, POD, FAR, CSI, false alarms/km², median/p95 localization error.
+
+### Wake
+
+Wake detection rate, false-wake rate, axis angular MAE/p95, arm/continuity residuals.
+
+### Speed
+
+Bias, MAE, RMSE, median absolute error, coverage and uncertainty calibration against AIS/independent reference. Для каждой метрики указывается число применимых paired cases; отсутствие wake не превращается в нулевую скорость.
+
+### Operational
+
+Provider success rate, latency, bytes downloaded, cache hit rate, failure class distribution and reproducibility hash.
+
+Приёмка новой методики — сравнение с classical baseline на независимой выборке и confidence intervals, а не один удачный quicklook.
+
+Версионируемый каталог формул, units, applicability и QC: [`FEATURE_CATALOG.md`](FEATURE_CATALOG.md).
+
+## 9. Литература и данные
+
+- [Copernicus Sentinel-1 mission and products](https://dataspace.copernicus.eu/data-collections/copernicus-sentinel-missions/sentinel-1).
+- [CDSE STAC API](https://documentation.dataspace.copernicus.eu/APIs/STAC.html) и [CDSE OData](https://documentation.dataspace.copernicus.eu/APIs/OData.html).
+- Karakuş, Rizaev, Achim, [Ship Wake Detection in SAR Images via Sparse Regularization](https://doi.org/10.1109/TGRS.2019.2947360).
+- [A Systematic Review of Ship Wake Detection Methods in SAR Images](https://www.mdpi.com/2072-4292/16/20/3775).
+- [Planetary Computer Sentinel-1 RTC dataset](https://planetarycomputer.microsoft.com/dataset/sentinel-1-rtc).
+- [Copernicus Marine products](https://data.marine.copernicus.eu/products).
