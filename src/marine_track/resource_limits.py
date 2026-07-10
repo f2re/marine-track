@@ -242,7 +242,9 @@ def _load_yaml_limits(config_path: str | Path | None) -> dict[str, Any]:
         raise ResourceLimitError(f"Processing config cannot be read: {resolved}: {exc}") from exc
     if not isinstance(payload, dict):
         raise ResourceLimitError(f"Processing config must be a mapping: {resolved}")
-    configured = payload.get("resource_limits") or {}
+    configured = payload.get("resource_limits")
+    if configured is None:
+        return {}
     if not isinstance(configured, dict):
         raise ResourceLimitError(f"resource_limits must be a mapping: {resolved}")
     return configured

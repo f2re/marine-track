@@ -226,10 +226,15 @@ resource_limits:
 
 def test_resource_limits_reject_malformed_present_processing_config(tmp_path, monkeypatch):
     config = tmp_path / "processing.yaml"
-    config.write_text("resource_limits: []\n", encoding="utf-8")
+    config.write_text(
+        "ship_detection:\n  sar: {}\nresource_limits: []\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("MARINE_TRACK_PROCESSING_CONFIG", str(config))
     with pytest.raises(ResourceLimitError, match="resource_limits must be a mapping"):
         load_resource_limits()
+    with pytest.raises(ValueError, match="resource_limits must be a mapping"):
+        load_effective_detector_config(Sensor.SENTINEL1, path=config)
 
 
 def test_all_builtin_calibration_sectors_fit_default_aoi_limit():

@@ -134,8 +134,10 @@ def load_effective_detector_config(
     if not isinstance(preprocessing, dict):
         raise ValueError(f"preprocessing.{concrete_sensor.value} must be a mapping")
 
-    limits_root = payload.get("resource_limits") or {}
-    if not isinstance(limits_root, dict):
+    limits_root = payload.get("resource_limits")
+    if limits_root is None:
+        limits_root = {}
+    elif not isinstance(limits_root, dict):
         raise ValueError("resource_limits must be a mapping")
 
     method = str(detector.get("method", "local_cfar")).strip().lower()
