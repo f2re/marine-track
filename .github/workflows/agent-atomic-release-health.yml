@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   finalize:
@@ -19,23 +23,60 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Apply migration
-        run: python scripts/agent_atomic_release_health.py
-      - name: Install package
+      - name: Apply and validate
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .[dev]
-      - name: Format and validate
+          set +e
+          status=0
+          python scripts/agent_atomic_release_health.py > atomic-migration.txt 2>&1 || status=$?
+          if test "$status" = 0; then
+            python -m pip install --upgrade pip > atomic-install.txt 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            pip install -e .[dev] >> atomic-install.txt 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            ruff check --fix src tests runtime_check.py > atomic-ruff.txt 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            python -m compileall -q src runtime_check.py > atomic-compile.txt 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            bash -n install_telegram_bot.sh deploy_telegram_bot.sh > atomic-shell.txt 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            ruff check src tests runtime_check.py >> atomic-ruff.txt 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            pytest -q > atomic-pytest.txt 2>&1 || status=$?
+          fi
+          echo "$status" > atomic.exit
+          for file in atomic-migration.txt atomic-install.txt atomic-compile.txt atomic-shell.txt atomic-ruff.txt atomic-pytest.txt; do
+            test -f "$file" && cat "$file" || true
+          done
+          exit 0
+      - name: Publish diagnostics
+        if: always()
         run: |
-          ruff check --fix src tests runtime_check.py
-          python -m compileall -q src runtime_check.py
-          bash -n install_telegram_bot.sh deploy_telegram_bot.sh
-          ruff check src tests runtime_check.py
-          pytest -q
+          if test "$(cat atomic.exit)" != 0; then
+            {
+              echo 'Atomic release finalization failed.'
+              for file in atomic-migration.txt atomic-install.txt atomic-compile.txt atomic-shell.txt atomic-ruff.txt atomic-pytest.txt; do
+                if test -f "$file"; then
+                  echo
+                  echo "### $file"
+                  tail -n 300 "$file"
+                fi
+              done
+            } > atomic-diagnostics.txt
+            gh pr comment 14 --body-file atomic-diagnostics.txt || true
+          fi
+      - name: Gate
+        run: test "$(cat atomic.exit)" = 0
       - name: Commit tested implementation
         run: |
           rm -f scripts/agent_atomic_release_health.py
           rm -f .github/workflows/agent-atomic-release-health.yml
+          rm -f atomic.exit atomic-migration.txt atomic-install.txt atomic-compile.txt atomic-shell.txt atomic-ruff.txt atomic-pytest.txt atomic-diagnostics.txt
           git add -A
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
