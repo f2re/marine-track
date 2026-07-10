@@ -20,10 +20,10 @@ class TelegramBotConfig:
     detection_max_crops: int
     land_mask_geojson: Path | None
     shoreline_buffer_m: int
-    calibration_min_labels: int
-    calibration_min_positive: int
-    calibration_min_negative: int
-    calibration_crop_size_px: int
+    calibration_min_labels: int = 20
+    calibration_min_positive: int = 5
+    calibration_min_negative: int = 5
+    calibration_crop_size_px: int = 768
 
 
 def parse_admin_ids(raw: str | None) -> set[int]:
