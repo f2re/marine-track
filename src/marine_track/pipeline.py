@@ -95,7 +95,15 @@ def run_search_stage(
     write_manifest: bool = True,
 ) -> SearchStageResult:
     output.mkdir(parents=True, exist_ok=True)
-    cache_key = search_cache_key(aoi, start, end, sensor, max_results)
+    cache_key = search_cache_key(
+        aoi,
+        start,
+        end,
+        sensor,
+        max_results,
+        purpose="catalog",
+        capability="any_scene",
+    )
     cached = read_scene_search_cache(search_cache_path(cache_key))
     if cached is not None:
         provider, concrete_sensor, scenes = cached

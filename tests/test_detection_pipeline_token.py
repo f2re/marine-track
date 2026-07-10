@@ -9,6 +9,9 @@ from marine_track.models import Scene, Sensor
 from marine_track.scene_materializer import materialize_scene_from_token, select_processing_asset
 from marine_track.telegram_scene_browser import register_scenes
 
+OWNER_USER_ID = 100
+OWNER_CHAT_ID = 200
+
 
 def write_test_raster(path):
     data = np.zeros((64, 64), dtype="float32")
@@ -47,6 +50,8 @@ def register_test_scene(tmp_path, scene):
         scenes=[scene],
         scenes_json=tmp_path / "scenes.json",
         asset_manifest=tmp_path / "assets.csv",
+        owner_user_id=OWNER_USER_ID,
+        owner_chat_id=OWNER_CHAT_ID,
     )[0]
 
 
@@ -62,7 +67,12 @@ def test_materialize_scene_from_token(tmp_path):
     raster = write_test_raster(tmp_path / "scene.tif")
     scene = make_scene(raster)
     token = register_test_scene(tmp_path, scene)
-    materialized = materialize_scene_from_token(token, tmp_path)
+    materialized = materialize_scene_from_token(
+        token,
+        tmp_path,
+        owner_user_id=OWNER_USER_ID,
+        owner_chat_id=OWNER_CHAT_ID,
+    )
     assert materialized.raster_path.is_file()
     assert materialized.raster_key == "vv"
     assert materialized.scene.product_id == "LOCAL_TEST_SCENE"
@@ -72,7 +82,14 @@ def test_run_detection_for_token_outputs_files(tmp_path):
     raster = write_test_raster(tmp_path / "scene.tif")
     scene = make_scene(raster)
     token = register_test_scene(tmp_path, scene)
-    result = run_detection_for_token(token, tmp_path, threshold_sigma=1.0, local_window_px=0)
+    result = run_detection_for_token(
+        token,
+        tmp_path,
+        owner_user_id=OWNER_USER_ID,
+        owner_chat_id=OWNER_CHAT_ID,
+        threshold_sigma=1.0,
+        local_window_px=0,
+    )
     assert result.overview_png.is_file()
     assert result.geojson.is_file()
     assert result.csv.is_file()

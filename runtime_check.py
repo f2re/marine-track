@@ -144,11 +144,44 @@ def check_paths() -> list[str]:
     return errors
 
 
+def env_flag(name: str) -> bool | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return False
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    return None
+
+
 def check_telegram_env() -> list[str]:
+    errors: list[str] = []
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    if token:
-        return []
-    return ["TELEGRAM_BOT_TOKEN is empty; set it in /opt/marine_track/.env before deploy"]
+    if not token:
+        errors.append("TELEGRAM_BOT_TOKEN is empty; set it in /opt/marine_track/.env before deploy")
+
+    raw_admin_ids = os.getenv("TELEGRAM_ADMIN_IDS", "")
+    parsed_ids: set[int] = set()
+    for part in raw_admin_ids.replace(";", ",").replace(" ", ",").split(","):
+        value = part.strip()
+        if not value:
+            continue
+        try:
+            parsed_ids.add(int(value))
+        except ValueError:
+            errors.append(f"TELEGRAM_ADMIN_IDS contains a non-integer value: {value!r}")
+
+    public_access = env_flag("MARINE_TRACK_ALLOW_PUBLIC_BOT")
+    if public_access is None:
+        errors.append("MARINE_TRACK_ALLOW_PUBLIC_BOT must be boolean")
+    elif not parsed_ids and not public_access:
+        errors.append(
+            "Telegram access is fail-closed: set TELEGRAM_ADMIN_IDS or explicitly "
+            "set MARINE_TRACK_ALLOW_PUBLIC_BOT=1"
+        )
+    return errors
 
 
 def check_numeric_env() -> list[str]:

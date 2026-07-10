@@ -148,7 +148,7 @@ def saved_bbox_menu(update: Update):
 
 def is_authorized(update: Update) -> bool:
     config = get_config()
-    return not config.admin_ids or effective_user_id(update) in config.admin_ids
+    return config.allow_public_access or effective_user_id(update) in config.admin_ids
 
 
 async def require_authorized(update: Update) -> bool:

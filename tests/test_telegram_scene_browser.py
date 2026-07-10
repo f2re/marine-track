@@ -10,6 +10,9 @@ from marine_track.telegram_scene_browser import (
     select_preview_asset,
 )
 
+OWNER_USER_ID = 100
+OWNER_CHAT_ID = 200
+
 
 def make_scene() -> Scene:
     return Scene(
@@ -25,10 +28,13 @@ def make_scene() -> Scene:
     )
 
 
-def test_scene_token_is_stable():
+def test_scene_token_is_stable_and_scoped():
     scene = make_scene()
-    assert scene_token(scene) == scene_token(scene)
-    assert len(scene_token(scene)) == 12
+    token = scene_token(scene, OWNER_USER_ID, OWNER_CHAT_ID)
+    assert token == scene_token(scene, OWNER_USER_ID, OWNER_CHAT_ID)
+    assert token != scene_token(scene, OWNER_USER_ID + 1, OWNER_CHAT_ID)
+    assert token != scene_token(scene, OWNER_USER_ID, OWNER_CHAT_ID + 1)
+    assert len(token) == 20
 
 
 def test_select_preview_asset_prefers_thumbnail():
@@ -46,13 +52,31 @@ def test_registry_roundtrip(tmp_path):
         scenes=[scene],
         scenes_json=tmp_path / "scenes.json",
         asset_manifest=tmp_path / "assets.csv",
+        owner_user_id=OWNER_USER_ID,
+        owner_chat_id=OWNER_CHAT_ID,
     )
     assert len(tokens) == 1
-    found = find_scene(tmp_path, tokens[0])
+    found = find_scene(
+        tmp_path,
+        tokens[0],
+        owner_user_id=OWNER_USER_ID,
+        owner_chat_id=OWNER_CHAT_ID,
+    )
     assert found is not None
     loaded, record = found
     assert loaded.product_id == scene.product_id
     assert record["provider"] == "test"
+    assert record["owner_user_id"] == OWNER_USER_ID
+    assert record["owner_chat_id"] == OWNER_CHAT_ID
+    assert (
+        find_scene(
+            tmp_path,
+            tokens[0],
+            owner_user_id=OWNER_USER_ID + 1,
+            owner_chat_id=OWNER_CHAT_ID,
+        )
+        is None
+    )
 
 
 def test_parse_scene_helpers():
