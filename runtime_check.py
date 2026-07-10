@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
-ENV_FILE = PROJECT_DIR / ".env"
+PROJECT_ENV_FILE = PROJECT_DIR / ".env"
+CANONICAL_ENV_FILE = Path("/etc/marine-track/marine-track.env")
 VALID_PROVIDER_PROFILES = {"all", "scene", "aux", "core"}
 
 CORE_MODULES = (
@@ -67,15 +68,28 @@ AUX_PROVIDER_MODULES = (
 )
 
 
-def load_dotenv(path: Path = ENV_FILE) -> None:
-    if not path.is_file():
+def environment_file_path() -> Path:
+    explicit = os.getenv("MARINE_TRACK_ENV_FILE", "").strip()
+    if explicit:
+        return Path(explicit)
+    if CANONICAL_ENV_FILE.is_file():
+        return CANONICAL_ENV_FILE
+    return PROJECT_ENV_FILE
+
+
+def load_dotenv(path: Path | None = None) -> None:
+    resolved = path or environment_file_path()
+    if not resolved.is_file():
         return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in resolved.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        key = key.strip()
+        parsed = value.strip().strip('"').strip("'")
+        if key not in os.environ or not os.environ[key].strip():
+            os.environ[key] = parsed
 
 
 def provider_profile() -> str:
@@ -123,7 +137,9 @@ def check_paths() -> list[str]:
     )
     if not processing_config.is_file():
         errors.append(f"processing config not found: {processing_config}")
-    aoi = project_path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson"))
+    aoi = project_path(
+        os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson")
+    )
     if not aoi.is_file():
         errors.append(f"default AOI not found: {aoi}")
     land_mask = os.getenv("MARINE_TRACK_LAND_MASK_GEOJSON", "").strip()
@@ -164,11 +180,12 @@ def env_flag(name: str) -> bool | None:
     return None
 
 
-def check_telegram_env() -> list[str]:
+def check_telegram_env(env_file: Path | None = None) -> list[str]:
     errors: list[str] = []
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
-        errors.append("TELEGRAM_BOT_TOKEN is empty; set it in /opt/marine_track/.env before deploy")
+        resolved = env_file or environment_file_path()
+        errors.append(f"TELEGRAM_BOT_TOKEN is empty; set it in {resolved} before deploy")
 
     raw_admin_ids = os.getenv("TELEGRAM_ADMIN_IDS", "")
     parsed_ids: set[int] = set()
@@ -197,7 +214,9 @@ def check_processing_config() -> list[str]:
         from marine_track.models import Sensor
         from marine_track.processing_config import load_effective_detector_config
 
-        path = project_path(os.getenv("MARINE_TRACK_PROCESSING_CONFIG", "config/processing.yaml"))
+        path = project_path(
+            os.getenv("MARINE_TRACK_PROCESSING_CONFIG", "config/processing.yaml")
+        )
         load_effective_detector_config(Sensor.SENTINEL1, path=path)
         load_effective_detector_config(Sensor.SENTINEL2, path=path)
         return []
@@ -251,7 +270,7 @@ def check_numeric_env() -> list[str]:
     )
     for name in names:
         raw = os.getenv(name)
-        if raw is None:
+        if raw is None or not raw.strip():
             continue
         try:
             float(raw) if name in float_names else int(raw)
@@ -261,11 +280,12 @@ def check_numeric_env() -> list[str]:
 
 
 def main() -> int:
-    load_dotenv()
+    env_file = environment_file_path()
+    load_dotenv(env_file)
     errors = (
         check_imports()
         + check_paths()
-        + check_telegram_env()
+        + check_telegram_env(env_file)
         + check_processing_config()
         + check_numeric_env()
     )
