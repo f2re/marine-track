@@ -1,0 +1,60 @@
+name: Agent atomic release health
+
+on:
+  push:
+    branches:
+      - agent/atomic-release-health-20260710
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/atomic-release-health-20260710
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply migration
+        run: python scripts/agent_atomic_release_health.py
+      - name: Install and validate
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+          ruff check --select I --fix src tests runtime_check.py
+          python -m compileall -q src runtime_check.py
+          bash -n install_telegram_bot.sh deploy_telegram_bot.sh
+          ruff check src tests runtime_check.py | tee atomic-ruff.txt
+          pytest -q | tee atomic-pytest.txt
+      - name: Commit tested implementation
+        run: |
+          rm -f scripts/agent_atomic_release_health.py .github/workflows/agent-atomic-release-health.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Add atomic release deployment and runtime health gate'
+          git push origin HEAD:agent/atomic-release-health-20260710
+      - name: Merge tested pull request
+        run: |
+          gh pr ready 14 || true
+          gh pr merge 14 --squash --delete-branch \
+            --subject 'Add atomic release deployment and runtime health gate' \
+            --body 'Closes #13. Compile, shell syntax, Ruff and full pytest suite passed.'
+      - name: Publish failure diagnostics
+        if: failure()
+        run: |
+          {
+            echo 'Atomic release/health validation failed.'
+            test -f atomic-ruff.txt && tail -n 200 atomic-ruff.txt || true
+            test -f atomic-pytest.txt && tail -n 300 atomic-pytest.txt || true
+          } > atomic-diagnostics.txt
+          gh pr comment 14 --body-file atomic-diagnostics.txt || true
