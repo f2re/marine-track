@@ -45,6 +45,12 @@ read-only, switches `current` atomically, restarts systemd and executes an onlin
 Telegram `getMe` health gate. Failure after the switch restores `previous` and
 restarts the former release.
 
+Each attempt uses an immutable directory named `<code-version>-<UTC timestamp>`; therefore a retry of
+the same commit never collides with a failed earlier attempt. `release.json` records non-secret
+release metadata, while `release.env` supplies `MARINE_TRACK_CODE_VERSION` and
+`MARINE_TRACK_RELEASE_ID` to systemd after the shared environment file. Inactive failed attempts are
+kept only until normal release retention removes them.
+
 Use the health command independently:
 
 ```bash

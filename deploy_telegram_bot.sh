@@ -98,16 +98,25 @@ if [[ "${EUID}" -eq 0 ]]; then
   chown -R "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR" "$CACHE_DIR"
 fi
 
-release_source="${MARINE_TRACK_RELEASE_ID:-}"
-if [[ -z "$release_source" ]]; then
-  release_source="$(git -C "$SOURCE_DIR" rev-parse --short=12 HEAD 2>/dev/null || true)"
+code_source="${MARINE_TRACK_CODE_VERSION:-${MARINE_TRACK_RELEASE_ID:-}}"
+if [[ -z "$code_source" ]]; then
+  code_source="$(git -C "$SOURCE_DIR" rev-parse --short=12 HEAD 2>/dev/null || true)"
 fi
-if [[ -z "$release_source" ]]; then
-  release_source="$(date -u +%Y%m%dT%H%M%SZ)"
+if [[ -z "$code_source" ]]; then
+  code_source="unknown"
 fi
-RELEASE_ID="$(printf '%s' "$release_source" | tr -cs 'A-Za-z0-9._-' '-')"
+CODE_VERSION="$(printf '%s' "$code_source" | tr -cs 'A-Za-z0-9._-' '-')"
+CODE_VERSION="${CODE_VERSION%-}"
+[[ -n "$CODE_VERSION" ]] || CODE_VERSION="unknown"
+DEPLOYMENT_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+RELEASE_ID="${CODE_VERSION}-${DEPLOYMENT_STAMP}"
 FINAL_RELEASE="$RELEASES_DIR/$RELEASE_ID"
-[[ ! -e "$FINAL_RELEASE" ]] || fail "release already exists: $FINAL_RELEASE"
+attempt=1
+while [[ -e "$FINAL_RELEASE" || -e "$RELEASES_DIR/.staging-$RELEASE_ID-$$" ]]; do
+  RELEASE_ID="${CODE_VERSION}-${DEPLOYMENT_STAMP}-retry${attempt}"
+  FINAL_RELEASE="$RELEASES_DIR/$RELEASE_ID"
+  attempt=$((attempt + 1))
+done
 STAGING="$RELEASES_DIR/.staging-$RELEASE_ID-$$"
 
 cleanup_staging() {
@@ -140,7 +149,7 @@ rollback() {
 trap rollback ERR
 trap cleanup_staging EXIT
 
-log "staging release $RELEASE_ID"
+log "staging release $RELEASE_ID (code $CODE_VERSION)"
 mkdir -p "$STAGING"
 rsync -a --delete \
   --exclude '.git/' \
@@ -162,13 +171,45 @@ case "$profile" in
 esac
 "$STAGING/.venv/bin/pip" install "$package_spec"
 
-export MARINE_TRACK_CODE_VERSION="$RELEASE_ID"
+export MARINE_TRACK_CODE_VERSION="$CODE_VERSION"
+export MARINE_TRACK_RELEASE_ID="$RELEASE_ID"
 "$STAGING/.venv/bin/python" -m compileall -q "$STAGING/src" "$STAGING/runtime_check.py"
 "$STAGING/.venv/bin/python" "$STAGING/runtime_check.py"
 "$STAGING/.venv/bin/python" -m marine_track.smoke_check \
   --base-dir "$STAGING" --env-file "$ENV_FILE"
 "$STAGING/.venv/bin/python" -m marine_track.health \
   --base-dir "$STAGING" --env-file "$ENV_FILE" --json
+
+RELEASE_CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+"$STAGING/.venv/bin/python" - "$STAGING/release.json" "$STAGING/release.env"   "$RELEASE_ID" "$CODE_VERSION" "$RELEASE_CREATED_AT" "$profile" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+metadata_path = Path(sys.argv[1])
+env_path = Path(sys.argv[2])
+release_id, code_version, created_at, provider_profile = sys.argv[3:7]
+payload = {
+    "schema_version": 1,
+    "release_id": release_id,
+    "code_version": code_version,
+    "created_at": created_at,
+    "provider_profile": provider_profile,
+}
+temporary = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
+temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+os.replace(temporary, metadata_path)
+env_temporary = env_path.with_suffix(env_path.suffix + ".tmp")
+env_temporary.write_text(
+    f"MARINE_TRACK_CODE_VERSION={code_version}\n"
+    f"MARINE_TRACK_RELEASE_ID={release_id}\n",
+    encoding="utf-8",
+)
+os.replace(env_temporary, env_path)
+PY
 
 if [[ "${EUID}" -eq 0 ]]; then
   chown -R root:root "$STAGING"
@@ -194,7 +235,7 @@ systemctl is-active --quiet "$SERVICE_NAME"
 
 SWITCHED=0
 trap - ERR
-log "release $RELEASE_ID is active"
+log "release $RELEASE_ID is active (code $CODE_VERSION)"
 
 mapfile -t releases < <(
   find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d ! -name '.staging-*' -printf '%T@ %p\n' \

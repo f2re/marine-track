@@ -75,3 +75,22 @@ def test_systemd_unit_uses_immutable_current_and_shared_writable_dirs():
     assert "User=marine-track" in text
     assert "Environment=MARINE_TRACK_ENV_FILE=/etc/marine-track/marine-track.env" in text
     assert "EnvironmentFile=/etc/marine-track/marine-track.env" in text
+
+
+
+def test_deploy_release_ids_are_retry_safe_and_identity_is_separated():
+    deploy = (ROOT / "deploy_telegram_bot.sh").read_text(encoding="utf-8")
+    assert 'DEPLOYMENT_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"' in deploy
+    assert 'RELEASE_ID="${CODE_VERSION}-${DEPLOYMENT_STAMP}"' in deploy
+    assert "-retry${attempt}" in deploy
+    assert 'export MARINE_TRACK_CODE_VERSION="$CODE_VERSION"' in deploy
+    assert 'export MARINE_TRACK_RELEASE_ID="$RELEASE_ID"' in deploy
+    assert '"$STAGING/release.json" "$STAGING/release.env"' in deploy
+    assert "release already exists" not in deploy
+
+
+def test_systemd_loads_release_identity_after_shared_environment():
+    unit = (ROOT / "ops" / "marine-track.service").read_text(encoding="utf-8")
+    shared = unit.index("EnvironmentFile=/etc/marine-track/marine-track.env")
+    release = unit.index("EnvironmentFile=-/opt/marine_track/current/release.env")
+    assert shared < release

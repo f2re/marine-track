@@ -33,6 +33,7 @@ class HealthReport:
     hostname: str
     package_version: str
     code_version: str
+    release_id: str
     checks: list[HealthCheck]
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +43,7 @@ class HealthReport:
             "hostname": self.hostname,
             "package_version": self.package_version,
             "code_version": self.code_version,
+            "release_id": self.release_id,
             "checks": [asdict(check) for check in self.checks],
         }
 
@@ -113,7 +115,8 @@ def collect_health(
         generated_at=datetime.now(timezone.utc).isoformat(),
         hostname=socket.gethostname(),
         package_version=_package_version(),
-        code_version=os.getenv("MARINE_TRACK_CODE_VERSION", "unknown"),
+        code_version=os.getenv("MARINE_TRACK_CODE_VERSION", "unknown") or "unknown",
+        release_id=os.getenv("MARINE_TRACK_RELEASE_ID", "unknown") or "unknown",
         checks=checks,
     )
 
