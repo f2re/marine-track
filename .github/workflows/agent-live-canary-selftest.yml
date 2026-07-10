@@ -1,0 +1,67 @@
+name: Finalize live canary and self-test
+
+on:
+  push:
+    branches:
+      - agent/live-canary-selftest-20260710
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-canary-selftest-20260710
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply implementation
+        run: |
+          python scripts/agent_live_canary_selftest.py
+          python scripts/agent_live_canary_fix.py
+      - name: Install and validate
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip 2>&1 | tee live-canary-install.txt
+          pip install -e .[dev] 2>&1 | tee -a live-canary-install.txt
+          ruff check --fix src tests runtime_check.py 2>&1 | tee live-canary-ruff.txt
+          python -m compileall -q src runtime_check.py 2>&1 | tee live-canary-compile.txt
+          bash -n install_telegram_bot.sh deploy_telegram_bot.sh 2>&1 | tee live-canary-shell.txt
+          ruff check src tests runtime_check.py 2>&1 | tee -a live-canary-ruff.txt
+          pytest -q 2>&1 | tee live-canary-pytest.txt
+      - name: Commit tested implementation
+        run: |
+          rm -f scripts/agent_live_canary_selftest.py scripts/agent_live_canary_fix.py
+          rm -f .github/workflows/agent-live-canary-selftest.yml
+          rm -f live-canary-install.txt live-canary-ruff.txt live-canary-compile.txt live-canary-shell.txt live-canary-pytest.txt
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --cached --quiet; then
+            echo 'No generated changes found.' >&2
+            exit 1
+          fi
+          git commit -m 'Add live Sentinel-1 canary and administrator self-test'
+          git push origin HEAD:agent/live-canary-selftest-20260710
+      - name: Publish diagnostics
+        if: failure()
+        run: |
+          {
+            echo 'Live canary/self-test finalization failed.'
+            for file in live-canary-install.txt live-canary-ruff.txt live-canary-compile.txt live-canary-shell.txt live-canary-pytest.txt; do
+              if test -f "$file"; then
+                echo
+                echo "### $file"
+                tail -n 300 "$file"
+              fi
+            done
+          } > live-canary-diagnostics.txt
+          gh pr comment 28 --body-file live-canary-diagnostics.txt || true
