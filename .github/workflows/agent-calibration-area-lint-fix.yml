@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   repair:
@@ -48,22 +49,68 @@ jobs:
               '    ]\n'
               '    assert "mtcal:aall:0" in callbacks'
           )
-          if old not in text:
-              raise SystemExit('test assertion marker not found')
-          test.write_text(text.replace(old, new, 1), encoding='utf-8')
+          if old in text:
+              text = text.replace(old, new, 1)
+          test.write_text(text, encoding='utf-8')
           PY
-      - name: Validate
+      - name: Validate with diagnostics
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .[dev]
-          python -m compileall -q src runtime_check.py
-          ruff check src tests runtime_check.py
-          pytest -q
+          set +e
+          status=0
+          stage=install
+          logfile=calibration-area-install.txt
+          python -m pip install --upgrade pip > "$logfile" 2>&1 || status=$?
+          if test "$status" = 0; then pip install -e .[dev] >> "$logfile" 2>&1 || status=$?; fi
+          if test "$status" = 0; then
+            stage=ruff_fix
+            logfile=calibration-area-ruff.txt
+            ruff check --fix src tests runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=compile
+            logfile=calibration-area-compile.txt
+            python -m compileall -q src runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=ruff
+            logfile=calibration-area-ruff.txt
+            ruff check src tests runtime_check.py >> "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=pytest
+            logfile=calibration-area-pytest.txt
+            pytest -q > "$logfile" 2>&1 || status=$?
+          fi
+          echo "$status" > calibration-area.exit
+          echo "$stage" > calibration-area.stage
+          echo "$logfile" > calibration-area.logfile
+          if test "$status" != 0; then
+            {
+              echo "Calibration area validation failed at stage: $stage"
+              echo
+              echo "### $logfile"
+              test -f "$logfile" && tail -n 300 "$logfile" || true
+            } > calibration-area-diagnostics.txt
+            gh pr comment 21 --body-file calibration-area-diagnostics.txt || true
+          fi
+          test -f "$logfile" && cat "$logfile" || true
+          exit 0
+      - name: Gate
+        run: test "$(cat calibration-area.exit)" = 0
       - name: Commit repair
         run: |
           rm -f .github/workflows/agent-calibration-area-lint-fix.yml
+          rm -f calibration-area.exit calibration-area.stage calibration-area.logfile
+          rm -f calibration-area-install.txt calibration-area-ruff.txt calibration-area-compile.txt
+          rm -f calibration-area-pytest.txt calibration-area-diagnostics.txt
           git add -A
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --cached --quiet; then
+            echo 'No repair changes found.' >&2
+            exit 1
+          fi
           git commit -m 'Fix calibration area workflow validation'
           git push origin HEAD:agent/calibration-area-search-20260710
