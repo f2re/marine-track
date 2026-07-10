@@ -12,6 +12,12 @@ The production layout separates immutable releases from mutable runtime state:
 /var/log/marine-track/                      service-owned logs
 ```
 
+`/etc/marine-track/marine-track.env` is the only production environment file used
+by deploy, runtime checks and systemd. `/opt/marine_track/.env` is a legacy source
+only. Install and deploy reconcile non-empty legacy values into empty canonical
+values, preserve already configured canonical values, add new template keys without
+duplicates and normalize the result to LF with exactly one trailing newline.
+
 Initial preparation:
 
 ```bash
@@ -20,7 +26,19 @@ sudoedit /etc/marine-track/marine-track.env
 sudo ./deploy_telegram_bot.sh
 ```
 
-A deploy holds `/run/lock/marine-track-deploy.lock`, copies the source into a
+The required Telegram settings are:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=<new token from BotFather>
+TELEGRAM_ADMIN_IDS=<numeric Telegram user id>
+MARINE_TRACK_ALLOW_PUBLIC_BOT=0
+```
+
+Empty detection override variables in the template are intentional and mean “use
+`config/processing.yaml`”. They are not numeric configuration errors.
+
+A deploy holds `/run/lock/marine-track-deploy.lock`, safely parses the canonical
+environment file without executing it as shell code, copies the source into a
 staging release, builds a non-editable virtual environment, runs compile,
 `runtime_check.py`, smoke check and offline health check, makes the release
 read-only, switches `current` atomically, restarts systemd and executes an online
@@ -30,7 +48,19 @@ restarts the former release.
 Use the health command independently:
 
 ```bash
-/opt/marine_track/current/.venv/bin/marine-track-health   --base-dir /opt/marine_track/current   --env-file /etc/marine-track/marine-track.env   --telegram --json
+/opt/marine_track/current/.venv/bin/marine-track-health \
+  --base-dir /opt/marine_track/current \
+  --env-file /etc/marine-track/marine-track.env \
+  --telegram --json
+```
+
+To inspect the active configuration without printing secrets:
+
+```bash
+sudo grep -E '^(MARINE_TRACK_ENV_FILE|MARINE_TRACK_OUTPUT_DIR|MARINE_TRACK_CACHE_DIR|TELEGRAM_ADMIN_IDS|MARINE_TRACK_ALLOW_PUBLIC_BOT)=' \
+  /etc/marine-track/marine-track.env
+sudo systemctl status marine-track.service --no-pager
+sudo journalctl -u marine-track.service -n 100 --no-pager
 ```
 
 `degraded` is non-fatal and normally means that no scene registry or calibrated

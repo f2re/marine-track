@@ -70,10 +70,16 @@ def env_optional_path(name: str) -> Path | None:
     return Path(raw) if raw else None
 
 
+def configured_env_path() -> str:
+    return os.getenv("MARINE_TRACK_ENV_FILE", ".env").strip() or ".env"
+
+
 def load_telegram_config() -> TelegramBotConfig:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is empty. Set it in .env before startup.")
+        raise RuntimeError(
+            f"TELEGRAM_BOT_TOKEN is empty. Set it in {configured_env_path()} before startup."
+        )
 
     admin_ids = parse_admin_ids(os.getenv("TELEGRAM_ADMIN_IDS"))
     allow_public_access = env_bool("MARINE_TRACK_ALLOW_PUBLIC_BOT", False)
@@ -85,16 +91,24 @@ def load_telegram_config() -> TelegramBotConfig:
         default_sensor = Sensor.AUTO
 
     calibration_min_labels = env_int("MARINE_TRACK_CALIBRATION_MIN_LABELS", 20, 4, 100000)
-    calibration_min_positive = env_int("MARINE_TRACK_CALIBRATION_MIN_POSITIVE", 5, 1, calibration_min_labels)
-    calibration_min_negative = env_int("MARINE_TRACK_CALIBRATION_MIN_NEGATIVE", 5, 1, calibration_min_labels)
+    calibration_min_positive = env_int(
+        "MARINE_TRACK_CALIBRATION_MIN_POSITIVE", 5, 1, calibration_min_labels
+    )
+    calibration_min_negative = env_int(
+        "MARINE_TRACK_CALIBRATION_MIN_NEGATIVE", 5, 1, calibration_min_labels
+    )
 
     return TelegramBotConfig(
         token=token,
         admin_ids=admin_ids,
-        default_aoi=Path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson")),
+        default_aoi=Path(
+            os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson")
+        ),
         output_dir=Path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram")),
         default_sensor=default_sensor,
-        default_lookback_hours=env_int("MARINE_TRACK_DEFAULT_LOOKBACK_HOURS", 72, 1, 24 * 30),
+        default_lookback_hours=env_int(
+            "MARINE_TRACK_DEFAULT_LOOKBACK_HOURS", 72, 1, 24 * 30
+        ),
         max_results=env_int("MARINE_TRACK_MAX_RESULTS", 10, 1, 100),
         max_concurrent_jobs=env_int("MARINE_TRACK_MAX_CONCURRENT_JOBS", 1, 1, 10),
         detection_max_crops=env_int("MARINE_TRACK_DETECTION_MAX_CROPS", 10, 0, 100),
@@ -104,5 +118,7 @@ def load_telegram_config() -> TelegramBotConfig:
         calibration_min_labels=calibration_min_labels,
         calibration_min_positive=calibration_min_positive,
         calibration_min_negative=calibration_min_negative,
-        calibration_crop_size_px=env_int("MARINE_TRACK_CALIBRATION_CROP_SIZE_PX", 768, 384, 1200),
+        calibration_crop_size_px=env_int(
+            "MARINE_TRACK_CALIBRATION_CROP_SIZE_PX", 768, 384, 1200
+        ),
     )
