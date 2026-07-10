@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _shell_function(text: str, name: str) -> str:
+    marker = f"{name}() {{"
+    start = text.index(marker)
+    end = text.index("\n}", start) + 2
+    return text[start:end]
 
 
 def test_shell_scripts_are_syntactically_valid():
@@ -20,6 +28,22 @@ def test_deploy_is_atomic_non_editable_and_has_rollback():
     assert "systemctl is-active --quiet" in text
     assert "-m marine_track.health" in text
     assert ".staging-" in text
+
+
+def test_atomic_link_runs_with_bash_nounset(tmp_path: Path):
+    text = (ROOT / "deploy_telegram_bot.sh").read_text(encoding="utf-8")
+    function = _shell_function(text, "atomic_link")
+    target = tmp_path / "release"
+    link_path = tmp_path / "current"
+    target.mkdir()
+
+    script = f"""set -Eeuo pipefail
+{function}
+atomic_link {shlex.quote(str(target))} {shlex.quote(str(link_path))}
+test -L {shlex.quote(str(link_path))}
+test "$(readlink {shlex.quote(str(link_path))})" = {shlex.quote(str(target))}
+"""
+    subprocess.run(["bash", "-c", script], check=True)
 
 
 def test_deploy_reconciles_and_safely_loads_canonical_environment():
