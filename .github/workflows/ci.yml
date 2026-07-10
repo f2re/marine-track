@@ -27,6 +27,7 @@ jobs:
         run: |
           set +e
           status=0
+          git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
           python scripts/agent_atomic_release_health.py > atomic-migration.txt 2>&1 || status=$?
           if test "$status" = 0; then python -m pip install --upgrade pip > atomic-install.txt 2>&1 || status=$?; fi
           if test "$status" = 0; then pip install -e .[dev] >> atomic-install.txt 2>&1 || status=$?; fi
@@ -60,7 +61,6 @@ jobs:
         run: test "$(cat atomic.exit)" = 0
       - name: Commit tested implementation
         run: |
-          git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
           rm -f scripts/agent_atomic_release_health.py
           rm -f atomic.exit atomic-migration.txt atomic-install.txt atomic-compile.txt atomic-shell.txt atomic-ruff.txt atomic-pytest.txt atomic-diagnostics.txt
           git add -A
