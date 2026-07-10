@@ -1,0 +1,66 @@
+name: Agent fix optional AIS track values
+
+on:
+  push:
+    branches:
+      - agent/result-semantics-ais-qc-20260710
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/result-semantics-ais-qc-20260710
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Patch optional values
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/marine_track/detection_pipeline.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''        sog = row.get("sog_knots")
+                  cog = row.get("cog_deg")
+                  points.append(
+                      {
+                          "time": row["time"].isoformat(),
+                          "lon": float(row["lon"]),
+                          "lat": float(row["lat"]),
+                          "sog_knots": None if sog != sog else float(sog),
+                          "cog_deg": None if cog != cog else float(cog),
+                      }
+                  )'''.replace('                  ', '')
+          new = '''        sog = row.get("sog_knots")
+                  cog = row.get("cog_deg")
+                  sog_value = float(sog) if isinstance(sog, (int, float)) and math.isfinite(float(sog)) else None
+                  cog_value = float(cog) % 360.0 if isinstance(cog, (int, float)) and math.isfinite(float(cog)) else None
+                  points.append(
+                      {
+                          "time": row["time"].isoformat(),
+                          "lon": float(row["lon"]),
+                          "lat": float(row["lat"]),
+                          "sog_knots": sog_value,
+                          "cog_deg": cog_value,
+                      }
+                  )'''.replace('                  ', '')
+          if old in text:
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Format and commit
+        run: |
+          python -m pip install 'ruff>=0.5'
+          ruff check --select I --fix src/marine_track/detection_pipeline.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/marine_track/detection_pipeline.py
+          if git diff --cached --quiet; then
+            echo 'No change required.'
+            exit 0
+          fi
+          git commit -m 'Handle missing optional AIS track values'
+          git push origin HEAD:agent/result-semantics-ais-qc-20260710
