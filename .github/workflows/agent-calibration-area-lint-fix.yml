@@ -1,15 +1,17 @@
 name: Repair calibration area workflow
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/calibration-area-search-20260710
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
 
 jobs:
   repair:
+    if: github.head_ref == 'agent/calibration-area-search-20260710'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,17 +33,21 @@ jobs:
 
           test = Path('tests/test_calibration_area_workflow.py')
           text = test.read_text(encoding='utf-8')
-          old = '''    assert f"mtcal:{ACTION_AREA_HOME}" in [
-              button.callback_data
-              for row in area_home_markup(config, 100).inline_keyboard
-              for button in row
-          ]'''.replace('          ', '')
-          new = '''    callbacks = [
-              button.callback_data
-              for row in area_home_markup(config, 100).inline_keyboard
-              for button in row
-          ]
-          assert "mtcal:aall:0" in callbacks'''.replace('          ', '')
+          old = (
+              '    assert f"mtcal:{ACTION_AREA_HOME}" in [\n'
+              '        button.callback_data\n'
+              '        for row in area_home_markup(config, 100).inline_keyboard\n'
+              '        for button in row\n'
+              '    ]'
+          )
+          new = (
+              '    callbacks = [\n'
+              '        button.callback_data\n'
+              '        for row in area_home_markup(config, 100).inline_keyboard\n'
+              '        for button in row\n'
+              '    ]\n'
+              '    assert "mtcal:aall:0" in callbacks'
+          )
           if old not in text:
               raise SystemExit('test assertion marker not found')
           test.write_text(text.replace(old, new, 1), encoding='utf-8')
