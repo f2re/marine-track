@@ -27,6 +27,8 @@ CORE_MODULES = (
     "cv2",
     "marine_track.cli",
     "marine_track.pipeline",
+    "marine_track.processing_config",
+    "marine_track.provenance",
     "marine_track.calibration",
     "marine_track.calibration_phase2",
     "marine_track.calibration_phase2_tiles",
@@ -115,6 +117,11 @@ def check_imports() -> list[str]:
 
 def check_paths() -> list[str]:
     errors: list[str] = []
+    processing_config = project_path(
+        os.getenv("MARINE_TRACK_PROCESSING_CONFIG", "config/processing.yaml")
+    )
+    if not processing_config.is_file():
+        errors.append(f"processing config not found: {processing_config}")
     aoi = project_path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson"))
     if not aoi.is_file():
         errors.append(f"default AOI not found: {aoi}")
@@ -184,18 +191,39 @@ def check_telegram_env() -> list[str]:
     return errors
 
 
+def check_processing_config() -> list[str]:
+    try:
+        from marine_track.models import Sensor
+        from marine_track.processing_config import load_effective_detector_config
+
+        path = project_path(os.getenv("MARINE_TRACK_PROCESSING_CONFIG", "config/processing.yaml"))
+        load_effective_detector_config(Sensor.SENTINEL1, path=path)
+        load_effective_detector_config(Sensor.SENTINEL2, path=path)
+        return []
+    except Exception as exc:
+        return [f"processing config invalid: {exc}"]
+
+
 def check_numeric_env() -> list[str]:
     errors: list[str] = []
     float_names = {
         "MARINE_TRACK_AIS_MAX_DISTANCE_M",
         "MARINE_TRACK_CALIBRATION_PHASE2_MIN_VALID_FRACTION",
         "MARINE_TRACK_CALIBRATION_PHASE2_MIN_IMPROVEMENT",
+        "MARINE_TRACK_DETECTION_THRESHOLD_SIGMA",
+        "MARINE_TRACK_DETECTION_MIN_CONTRAST_SIGMA",
     }
     names = (
         "MARINE_TRACK_DEFAULT_LOOKBACK_HOURS",
         "MARINE_TRACK_MAX_RESULTS",
         "MARINE_TRACK_MAX_CONCURRENT_JOBS",
         "MARINE_TRACK_DETECTION_MAX_CROPS",
+        "MARINE_TRACK_DETECTION_THRESHOLD_SIGMA",
+        "MARINE_TRACK_DETECTION_MIN_AREA_PX",
+        "MARINE_TRACK_DETECTION_MAX_AREA_PX",
+        "MARINE_TRACK_DETECTION_LOCAL_WINDOW_PX",
+        "MARINE_TRACK_DETECTION_GUARD_WINDOW_PX",
+        "MARINE_TRACK_DETECTION_MIN_CONTRAST_SIGMA",
         "MARINE_TRACK_CALIBRATION_MIN_LABELS",
         "MARINE_TRACK_CALIBRATION_MIN_POSITIVE",
         "MARINE_TRACK_CALIBRATION_MIN_NEGATIVE",
@@ -230,7 +258,13 @@ def check_numeric_env() -> list[str]:
 
 def main() -> int:
     load_dotenv()
-    errors = check_imports() + check_paths() + check_telegram_env() + check_numeric_env()
+    errors = (
+        check_imports()
+        + check_paths()
+        + check_telegram_env()
+        + check_processing_config()
+        + check_numeric_env()
+    )
     profile = os.getenv("MARINE_TRACK_PROVIDER_PROFILE", "all").strip().lower()
     if errors:
         print(f"Runtime check failed (provider_profile={profile}):", file=sys.stderr)
