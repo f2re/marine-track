@@ -9,12 +9,16 @@ preprocessing:
     shoreline_buffer_m: 500
     tile_size_px: 1024
     tile_overlap_px: 128
+    normalization_sample_pixels: 1000000
 
   sentinel2:
     use_cloud_mask: true
     use_water_mask: true
     target_resolution_m: 10
     required_bands: [B02, B03, B04, B08]
+    tile_size_px: 1024
+    tile_overlap_px: 128
+    normalization_sample_pixels: 1000000
 
 detection_scene_search:
   sentinel1_provider_order: [planetary_computer, copernicus_cdse]
@@ -32,6 +36,7 @@ ship_detection:
     guard_window_px: 5
     threshold_sigma: 3.5
     min_contrast_sigma: 0.0
+    min_training_fraction: 0.5
     land_mask_mode: optional_geojson
 
   optical:
@@ -42,8 +47,16 @@ ship_detection:
     guard_window_px: 5
     threshold_sigma: 3.5
     min_contrast_sigma: 0.0
+    min_training_fraction: 0.5
     contrast_percentile: 98.5
     land_mask_mode: optional_geojson
+
+resource_limits:
+  max_aoi_area_km2: 25000
+  max_aoi_vertices: 5000
+  max_raster_pixels: 2000000000
+  max_tiles: 20000
+  max_candidates: 10000
 
 wake_detection:
   crop_size_m: 5000
