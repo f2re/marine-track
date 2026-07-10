@@ -27,6 +27,23 @@ class PixelObject:
     minor_axis_px: float
     orientation_image_deg: float | None
     elongation: float
+    training_count_px: int = 0
+    training_fraction: float = 0.0
+    edge_flag: bool = False
+    threshold_value: float | None = None
+
+
+@dataclass(frozen=True)
+class CFARStatistics:
+    mask: np.ndarray
+    background_mean: np.ndarray
+    background_std: np.ndarray
+    threshold: np.ndarray
+    training_count: np.ndarray
+    training_fraction: np.ndarray
+    edge: np.ndarray
+    training_window_px: int
+    guard_window_px: int
 
 
 def adaptive_threshold_candidates(
@@ -37,52 +54,67 @@ def adaptive_threshold_candidates(
     local_window_px: int = 0,
     guard_window_px: int = 0,
     min_contrast_sigma: float = 0.0,
+    min_training_fraction: float = 0.5,
 ) -> list[PixelObject]:
-    """Detect bright compact candidates in a 2D raster.
+    """Detect bright compact candidates in a normalized 2D raster.
 
-    The input image is expected to be normalized to 0..1 upstream. With a positive
-    local_window_px this is a local-CFAR style detector: candidate pixels must
-    exceed local mean + threshold_sigma * local std. Components then receive
-    shape and local-contrast metrics for provenance and ranking.
+    Local CFAR estimates clutter from the outer training window after removing
+    the complete inner guard region (which includes the cell under test). NaN
+    pixels reduce the effective training fraction and are never detections.
     """
+
     if image.ndim != 2:
         raise ValueError("image must be 2D")
     finite = np.isfinite(image)
     if not finite.any():
         return []
 
-    mask = cfar_mask(image, threshold_sigma, local_window_px, guard_window_px)
-    labels, n = ndi.label(mask)
+    statistics = cfar_statistics(
+        image,
+        threshold_sigma=threshold_sigma,
+        local_window_px=local_window_px,
+        guard_window_px=guard_window_px,
+        min_training_fraction=min_training_fraction,
+    )
+    labels, count = ndi.label(statistics.mask)
     objects = ndi.find_objects(labels)
     candidates: list[PixelObject] = []
-    for label_id in range(1, n + 1):
-        slc = objects[label_id - 1]
-        if slc is None:
+    for label_id in range(1, count + 1):
+        slices = objects[label_id - 1]
+        if slices is None:
             continue
-        component = labels[slc] == label_id
+        component = labels[slices] == label_id
         area = int(component.sum())
         if not (min_area_px <= area <= max_area_px):
             continue
+
+        local_values = np.where(component, image[slices], -np.inf)
+        peak_local_y, peak_local_x = np.unravel_index(
+            int(np.nanargmax(local_values)),
+            local_values.shape,
+        )
+        y0, x0 = slices[0].start, slices[1].start
+        y1, x1 = slices[0].stop, slices[1].stop
+        peak_y = y0 + int(peak_local_y)
+        peak_x = x0 + int(peak_local_x)
+
         cy, cx = ndi.center_of_mass(component)
-        y0, x0 = slc[0].start, slc[1].start
-        y1, x1 = slc[0].stop, slc[1].stop
-        values = image[slc][component]
+        values = image[slices][component]
         score = float(np.nanmean(values))
         peak_score = float(np.nanmax(values))
-        background_mean, background_std = local_background_stats(
-            image,
-            component,
-            y0,
-            x0,
-            y1,
-            x1,
-            local_window_px,
-        )
+        background_mean = float(statistics.background_mean[peak_y, peak_x])
+        background_std = float(statistics.background_std[peak_y, peak_x])
+        threshold_value = float(statistics.threshold[peak_y, peak_x])
+        training_count_px = int(round(float(statistics.training_count[peak_y, peak_x])))
+        training_fraction = float(statistics.training_fraction[peak_y, peak_x])
+        edge_flag = bool(statistics.edge[peak_y, peak_x])
+
         contrast_delta = max(0.0, peak_score - background_mean)
         raw_contrast = contrast_delta / max(background_std, CONTRAST_STD_FLOOR)
         contrast_sigma = float(min(MAX_CONTRAST_SIGMA, raw_contrast))
         if contrast_sigma < float(min_contrast_sigma):
             continue
+
         major_axis, minor_axis, orientation, elongation = component_shape_metrics(component)
         candidates.append(
             PixelObject(
@@ -99,9 +131,113 @@ def adaptive_threshold_candidates(
                 minor_axis_px=minor_axis,
                 orientation_image_deg=orientation,
                 elongation=elongation,
+                training_count_px=training_count_px,
+                training_fraction=training_fraction,
+                edge_flag=edge_flag,
+                threshold_value=threshold_value,
             )
         )
     return candidates
+
+
+def cfar_statistics(
+    image: np.ndarray,
+    threshold_sigma: float,
+    local_window_px: int = 0,
+    guard_window_px: int = 0,
+    min_training_fraction: float = 0.5,
+) -> CFARStatistics:
+    if image.ndim != 2:
+        raise ValueError("image must be 2D")
+    if threshold_sigma <= 0:
+        raise ValueError("threshold_sigma must be positive")
+    if not 0.0 <= min_training_fraction <= 1.0:
+        raise ValueError("min_training_fraction must be in [0, 1]")
+
+    finite = np.isfinite(image)
+    shape = image.shape
+    if local_window_px <= 0:
+        values = image[finite].astype("float64")
+        mean_value = float(values.mean()) if values.size else 0.0
+        std_value = float(values.std()) if values.size else 0.0
+        threshold_value = mean_value + threshold_sigma * std_value
+        background_mean = np.full(shape, mean_value, dtype="float32")
+        background_std = np.full(shape, std_value, dtype="float32")
+        threshold = np.full(shape, threshold_value, dtype="float32")
+        training_count = np.full(shape, float(values.size), dtype="float32")
+        training_fraction = np.where(finite, 1.0, 0.0).astype("float32")
+        edge = ~finite
+        mask = finite & (image > threshold_value)
+        return CFARStatistics(
+            mask=mask,
+            background_mean=background_mean,
+            background_std=background_std,
+            threshold=threshold,
+            training_count=training_count,
+            training_fraction=training_fraction,
+            edge=edge,
+            training_window_px=0,
+            guard_window_px=0,
+        )
+
+    window = _odd_window(local_window_px, minimum=3)
+    guard = _odd_window(max(guard_window_px, 1), minimum=1)
+    if guard >= window:
+        raise ValueError("guard_window_px must be smaller than local_window_px")
+
+    safe = np.where(finite, image, 0.0).astype("float64")
+    weights = finite.astype("float64")
+    outer_area = float(window * window)
+    guard_area = float(guard * guard)
+
+    outer_count = _window_sum(weights, window)
+    outer_sum = _window_sum(safe, window)
+    outer_squared = _window_sum(safe * safe, window)
+    guard_count = _window_sum(weights, guard)
+    guard_sum = _window_sum(safe, guard)
+    guard_squared = _window_sum(safe * safe, guard)
+
+    training_count = np.maximum(outer_count - guard_count, 0.0)
+    training_sum = outer_sum - guard_sum
+    training_squared = outer_squared - guard_squared
+    expected_count = max(1.0, outer_area - guard_area)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mean = np.divide(
+            training_sum,
+            training_count,
+            out=np.zeros_like(training_sum),
+            where=training_count > 0,
+        )
+        mean_squared = np.divide(
+            training_squared,
+            training_count,
+            out=np.zeros_like(training_squared),
+            where=training_count > 0,
+        )
+    variance = np.maximum(mean_squared - mean * mean, 0.0)
+    std = np.sqrt(variance)
+    threshold = mean + threshold_sigma * std
+    training_fraction = np.clip(training_count / expected_count, 0.0, 1.0)
+    edge = training_fraction < (1.0 - 1e-6)
+    mask = (
+        finite
+        & (training_fraction >= min_training_fraction)
+        & (training_count > 0)
+        & (image > threshold)
+    )
+
+    return CFARStatistics(
+        mask=mask,
+        background_mean=mean.astype("float32"),
+        background_std=std.astype("float32"),
+        threshold=threshold.astype("float32"),
+        training_count=training_count.astype("float32"),
+        training_fraction=training_fraction.astype("float32"),
+        edge=edge,
+        training_window_px=window,
+        guard_window_px=guard,
+    )
 
 
 def cfar_mask(
@@ -109,42 +245,33 @@ def cfar_mask(
     threshold_sigma: float,
     local_window_px: int = 0,
     guard_window_px: int = 0,
+    min_training_fraction: float = 0.5,
 ) -> np.ndarray:
-    finite = np.isfinite(image)
-    if local_window_px <= 0:
-        values = image[finite]
-        threshold = float(values.mean() + threshold_sigma * values.std())
-        mask = np.zeros_like(image, dtype=bool)
-        mask[finite] = image[finite] > threshold
-        return mask
+    """Compatibility wrapper returning only the CFAR detection mask."""
 
-    window = max(3, int(local_window_px))
-    if window % 2 == 0:
-        window += 1
-    safe = np.where(finite, image, 0.0).astype("float64")
-    weights = finite.astype("float64")
-    count = ndi.uniform_filter(weights, size=window, mode="constant")
-    summed = ndi.uniform_filter(safe, size=window, mode="constant")
-    squared = ndi.uniform_filter(safe * safe, size=window, mode="constant")
-    with np.errstate(divide="ignore", invalid="ignore"):
-        mean = np.divide(summed, count, out=np.zeros_like(summed), where=count > 0)
-        mean2 = np.divide(squared, count, out=np.zeros_like(squared), where=count > 0)
-    variance = np.maximum(mean2 - mean * mean, 0.0)
-    std = np.sqrt(variance)
-    threshold = mean + threshold_sigma * std
-    mask = finite & (image > threshold) & (count > 0.25)
+    return cfar_statistics(
+        image,
+        threshold_sigma=threshold_sigma,
+        local_window_px=local_window_px,
+        guard_window_px=guard_window_px,
+        min_training_fraction=min_training_fraction,
+    ).mask
 
-    guard = int(guard_window_px)
-    if guard > 0:
-        if guard % 2 == 0:
-            guard += 1
-        local_max = ndi.maximum_filter(
-            np.where(finite, image, -np.inf),
-            size=guard,
-            mode="nearest",
-        )
-        mask &= image >= local_max
-    return mask
+
+def _window_sum(values: np.ndarray, size: int) -> np.ndarray:
+    return ndi.uniform_filter(
+        values,
+        size=size,
+        mode="constant",
+        cval=0.0,
+    ) * float(size * size)
+
+
+def _odd_window(value: int, *, minimum: int) -> int:
+    size = max(minimum, int(value))
+    if size % 2 == 0:
+        size += 1
+    return size
 
 
 def local_background_stats(
@@ -156,6 +283,8 @@ def local_background_stats(
     x1: int,
     local_window_px: int,
 ) -> tuple[float, float]:
+    """Legacy component-level background statistic helper."""
+
     margin = max(8, int(local_window_px or 31) // 2)
     yy0 = max(0, y0 - margin)
     xx0 = max(0, x0 - margin)
@@ -165,13 +294,16 @@ def local_background_stats(
     exclude = np.zeros(patch.shape, dtype=bool)
     rel_y0 = y0 - yy0
     rel_x0 = x0 - xx0
-    exclude[rel_y0 : rel_y0 + component.shape[0], rel_x0 : rel_x0 + component.shape[1]] = component
+    exclude[
+        rel_y0 : rel_y0 + component.shape[0],
+        rel_x0 : rel_x0 + component.shape[1],
+    ] = component
     background = patch[np.isfinite(patch) & ~exclude]
     if background.size == 0:
-        finite = image[np.isfinite(image)]
-        if finite.size == 0:
+        finite_values = image[np.isfinite(image)]
+        if finite_values.size == 0:
             return 0.0, 0.0
-        return float(np.nanmean(finite)), float(np.nanstd(finite))
+        return float(np.nanmean(finite_values)), float(np.nanstd(finite_values))
     return float(np.nanmean(background)), float(np.nanstd(background))
 
 
