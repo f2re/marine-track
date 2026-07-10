@@ -69,7 +69,7 @@ V = sqrt(g * Lmax / (2*pi))
 
 Научные работы по wake speed используют спектральную/геометрическую структуру wake, а не произвольное расстояние между пиками одного поперечного профиля. См. [The speed and beam of a ship from its wake's SAR images](https://cris.tau.ac.il/en/publications/the-speed-and-beam-of-a-ship-from-its-wakes-sar-images) и обзор конечной глубины/волнения [Shugan et al., 2022](https://www.mdpi.com/2072-4292/14/7/926).
 
-Поэтому текущая реализация `cross_axis_profile_peaks` должна интерпретироваться как `speed_proxy`, иметь uncertainty/quality flags и не использоваться для основного оперативного вывода.
+Поэтому текущая реализация `cross_axis_profile_peaks` должна интерпретироваться как `speed_proxy`, иметь uncertainty/quality flags и не использоваться для основного оперативного вывода. Течение корректируется как вектор, а не скалярным вычитанием: wake относится прежде всего к движению относительно воды, AIS SOG — относительно грунта.
 
 ## 6. Sentinel-2
 
@@ -85,6 +85,7 @@ AIS полезен, но не является безусловной истин
 - расстояние detection–AIS;
 - число точек track;
 - ambiguity среди нескольких MMSI;
+- max interpolation gap, one-to-one assignment и margin до второго match;
 - difference in heading/speed;
 - timestamp и provenance источника AIS.
 
@@ -109,6 +110,8 @@ Bias, MAE, RMSE, median absolute error, coverage and uncertainty calibration aga
 Provider success rate, latency, bytes downloaded, cache hit rate, failure class distribution and reproducibility hash.
 
 Приёмка новой методики — сравнение с classical baseline на независимой выборке и confidence intervals, а не один удачный quicklook.
+
+Версионируемый каталог формул, units, applicability и QC: [`FEATURE_CATALOG.md`](FEATURE_CATALOG.md).
 
 ## 9. Литература и данные
 

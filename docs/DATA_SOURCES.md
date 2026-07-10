@@ -25,8 +25,9 @@ sentinel-1-grd
 Практические ограничения:
 
 - STAC является complementary catalogue с ограниченным набором коллекций;
-- asset может требовать CDSE authentication;
-- нужно проверять media type, COG/GeoTIFF, polarization, units и actual readable href;
+- S1 GRD collection публикует amplitude `uint16` COG и отдельные calibration/noise XML; это не готовый единый calibrated sigma0 band;
+- asset может содержать auth references и alternate HTTPS/S3 access, требующие CDSE authentication;
+- нужно сохранять media type/roles, COG/GeoTIFF, polarization, units/scale/nodata и проверять actual readable href range-read запросом;
 - при пропуске/задержке индексации использовать OData fallback.
 
 ### CDSE OData
@@ -43,7 +44,7 @@ https://catalogue.dataspace.copernicus.eu/odata/v1/Products
 
 Collections: Sentinel-1 RTC и GRD. Dataset pages: [S1 RTC](https://planetarycomputer.microsoft.com/dataset/sentinel-1-rtc), [S1 GRD](https://planetarycomputer.microsoft.com/dataset/sentinel-1-grd).
 
-STAC поиск публичен, но S1 RTC asset требует Planetary Computer account/API flow для SAS token. Это нужно проверять preflight-ом; текущая формулировка «credentials не требуются» неверна для operational materialization.
+STAC catalog и asset access нужно проверять раздельно. S1 RTC dataset page описывает account/API flow для SAS token, а официальный SDK допускает работу без subscription key с более строгими rate limits. Поэтому ни «всегда нужны credentials», ни «credentials никогда не нужны» не являются достаточным operational contract: нужен live sign + range-read preflight для конкретной collection/asset.
 
 Planetary Computer удобен как fallback для COG/RTC, но нужно хранить способ подписания URL и срок действия токена. Не сохранять SAS token в provenance/report.
 
@@ -52,6 +53,14 @@ Planetary Computer удобен как fallback для COG/RTC, но нужно 
 `asf_search` удобен для Sentinel-1 metadata/search и Earthdata download. Текущий код получает preview/product URL, но materializer сознательно не обрабатывает ASF ZIP/GRD. Поэтому ASF сейчас `search/preview/archive`, а не detection-capable provider.
 
 SAFE/GRD processing — отдельный этап после стабильного COG baseline; он требует явного контракта калибровки, orbit/noise handling и системных зависимостей.
+
+### Earth Search / AWS Open Data
+
+[Earth Search](https://github.com/Element84/earth-search) публикует public best-effort STAC и включает Sentinel-1 GRD, но S1 assets могут быть `s3://` в requester-pays bucket. Catalog search не требует credentials, а operational materialization может потребовать AWS credentials, requester-pays configuration и привести к расходам. Текущий materializer `s3://` не поддерживает; источник нельзя маркировать credentials-free processing fallback до canary и cost policy.
+
+### Platform continuity
+
+Provider fixtures и parsing не должны hard-code только Sentinel-1A/1B. Collection metadata уже допускает A/B/C/D, поэтому нужны contract tests для C/D platform identifiers, orbit/polarization metadata и новых product ids. Это защита от изменения состава миссии, а не основание смешивать продукты без radiometric validation.
 
 ## 2. Sentinel-2 optical — secondary
 
@@ -77,7 +86,15 @@ sentinel-2-l2a
 
 ## 3. Ocean context
 
-[Copernicus Marine Data Store](https://data.marine.copernicus.eu/products) предоставляет свободные/open продукты для currents, waves, wind/SST и global/regional ocean state.
+[Copernicus Marine Data Store](https://data.marine.copernicus.eu/products) предоставляет продукты для currents, waves, wind/SST и global/regional ocean state через account/toolbox flow.
+
+Рекомендуемый начальный набор:
+
+- [`GLOBAL_ANALYSISFORECAST_PHY_001_024`](https://data.marine.copernicus.eu/product/GLOBAL_ANALYSISFORECAST_PHY_001_024/description) — global physics forecast, включая surface currents;
+- [`GLOBAL_ANALYSISFORECAST_WAV_001_027`](https://data.marine.copernicus.eu/product/GLOBAL_ANALYSISFORECAST_WAV_001_027/description) — global wave forecast;
+- [`BLKSEA_ANALYSISFORECAST_PHY_007_001`](https://data.marine.copernicus.eu/product/BLKSEA_ANALYSISFORECAST_PHY_007_001/description) — пример более детального regional physics product для Black Sea.
+
+Product id недостаточен: точные dataset ids, variables, depths, versions и temporal resolution фиксируются в effective config/provenance и проверяются toolbox canary.
 
 Для использования в Marine Track требуется сохранять:
 
@@ -107,11 +124,13 @@ mmsi,time,lon,lat,sog_knots,cog_deg
 
 ### Global Fishing Watch
 
-Может быть полезен как отдельный исследовательский источник, но в текущем коде provider не реализован и не должен числиться рабочим fallback.
+Public API vessel-presence data может быть полезен как отдельный исследовательский/ретроспективный источник. Публичная выдача агрегирована примерно до одной позиции судна в час и публикуется с задержкой порядка 72–96 часов, поэтому не подходит как строгая realtime ground truth для каждого candidate. В текущем коде provider не реализован и не должен числиться рабочим fallback.
 
 ## 5. Static geometry
 
 Natural Earth land polygons подходят как coarse land/shoreline mask. Для nearshore detection следует учитывать геометрическую ошибку береговой линии, buffer sensitivity и не трактовать mask как точную линию воды.
+
+Для bathymetry/finite-depth applicability использовать versioned AOI subset [GEBCO 2026](https://www.gebco.net/data-products/gridded-bathymetry-data/gebco2026-grid) (global 15 arc-second grid). Значение глубины должно иметь source/version, interpolation/QC и не превращаться в точное локальное измерение в портах/у берега.
 
 ## 6. Минимальный provenance contract
 

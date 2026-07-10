@@ -29,10 +29,17 @@ scene token → GeoTIFF/COG → optional AOI crop → land mask → percentile n
 
 Кроме того:
 
+- maximum-filter после threshold может фрагментировать протяжённые яркие объекты, поэтому shape/area становятся зависимы от окна;
+- percentile 2/98 normalization клипирует верхний хвост, часто насыщает `peak_score=1` и делает половину текущего confidence слабо различающей кандидаты;
+- elongation получает положительный вклад в score и может повышать ranking береговых линий/волнового clutter;
+- min/max area задаются в pixels, поэтому физический фильтр меняется вместе с GSD;
 - detector рассчитан на bright compact targets;
 - темные суда, dark wake, sea clutter, port/coastal clutter и wind-dependent contrast требуют отдельных режимов;
 - единицы входного raster (DN/amplitude/sigma0/gamma0/dB) сейчас не входят в обязательный processing contract;
-- thresholds из `config/processing.yaml` не являются единственным источником параметров pipeline.
+- thresholds из `config/processing.yaml` фактически не управляют всеми CLI/Telegram paths: часть параметров hard-coded;
+- raster читается целиком, а не tiles, что создаёт RAM/latency risk для больших AOI.
+
+При AOI crop нужен отдельный valid-data mask: если source nodata не задан, filled pixels вне AOI не должны интерпретироваться как валидный нулевой фон.
 
 ## 3. Масштаб
 
@@ -72,6 +79,8 @@ haversine → x_m/y_m
 
 Это не вероятность судна, потому что отсутствуют labels, calibration split, negative scenes и uncertainty. До benchmark использовать названия `evidence_score`/`ranking_score`.
 
+Значение score не сопоставимо между AOI, providers и radiometric products до sensor-specific calibration. Сначала нужны отдельные `ship_evidence`, `wake_evidence`, `scene_quality`, `applicability` и `uncertainty`; объединённая вероятность допустима только после held-out calibration.
+
 Целевая схема:
 
 ```text
@@ -82,7 +91,9 @@ ship_score + wake_score + quality_score + uncertainty + quality_flags
 
 ### AIS reference
 
-При local AIS match pipeline записывает внешний SOG/COG reference. Нужно сохранять MMSI, distance, time gap, interpolation interval, number of points и ambiguity. AIS не является незаметной заменой собственному measurement.
+При local AIS match pipeline записывает внешний SOG/COG reference. Нужно сохранять MMSI, distance, time gap, interpolation interval, number of points, assignment margin и ambiguity. Matching должен быть one-to-one и ограничивать interpolation gap; сейчас один MMSI может независимо сопоставиться нескольким candidates. AIS не является незаметной заменой собственному measurement.
+
+Текущий runtime может записывать AIS SOG и Kelvin proxy в общее `speed_knots`, а overview/crops подписывать как «суда», `conf` и `speed`. Это необходимо исправить до научной оптимизации: operational speed остаётся `null`, proxy и AIS reference хранятся раздельно.
 
 ### Wake wavelength
 
@@ -125,3 +136,5 @@ speed_proxy_method = kelvin_wavelength_exp  # research field
 8. benchmark with labels and negative scenes.
 
 Научные приёмочные метрики: precision/recall/F1, POD/FAR/CSI, false alarms/km², localization error; для wake — false-wake rate and angular error; для speed — bias/MAE/RMSE/coverage against paired reference.
+
+Определения производных признаков, units и QC: [`FEATURE_CATALOG.md`](FEATURE_CATALOG.md).

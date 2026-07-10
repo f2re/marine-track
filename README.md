@@ -23,15 +23,15 @@ bash deploy_telegram_bot.sh --providers all
 
 Перед расширением алгоритмов и новых источников проект должен пройти `docs/RELEASE_GATE.md`: bash syntax, pytest, ruff, clean install, deploy, systemd, Telegram `/start`, `/dates`, `/detectbbox`, land-mask/cache checks.
 
-Пока release gate v0.1 не закрыт на сервере, не добавлять новые providers, Sentinel-2 full stack и ASF ZIP/GRD processing.
+Пока release gate v0.2 не закрыт на сервере, не добавлять новые providers, Sentinel-2 full stack и ASF ZIP/GRD processing.
 
-Актуальный технический и научный аудит: [`docs/AUDIT_2026-07-10.md`](docs/AUDIT_2026-07-10.md). На 2026-07-10 локальный gate не закрыт: 77 тестов проходят, 4 падают; `ruff` сообщает 2 import errors.
+Актуальный технический и научный аудит: [`docs/AUDIT_2026-07-10.md`](docs/AUDIT_2026-07-10.md). На 2026-07-10 локальный gate не закрыт: 77 тестов проходят, 4 падают; `ruff` сообщает 2 import errors; `mypy --no-incremental` — 74 ошибки. Дополнительно найдены P0-дефекты search-cache correctness, fail-open Telegram authorization и user isolation. До их исправления бот нельзя считать безопасным публичным сервисом.
 
 ## Что уже реализовано
 
 - Telegram bot `marine-track-bot`.
 - Главное inline-меню: `Найти суда`, `Сроки снимков`, `Повторить район`, `Сроки района`, `Мои районы`, `Выдача`, `Статус`, `Помощь`, `Мой ID`.
-- Быстрый сценарий без ручного token: default AOI → свежая detection-capable сцена → candidate detection → файлы.
+- Быстрый сценарий без ручного token: default AOI → первая возвращённая detection-capable сцена → candidate detection → файлы. Детерминированный выбор действительно самой свежей сцены остаётся P0-задачей.
 - Сохраненные bbox пользователя: `/bboxdates` и `/detectbbox` сохраняют до 10 районов для повторного запуска кнопками.
 - Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/areas`, `/output`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
 - `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
@@ -41,7 +41,7 @@ bash deploy_telegram_bot.sh --providers all
 - Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
 - Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
 - Provider profiles: `all`, `scene`, `aux`, `core`.
-- TTL-кеш scene-search, чтобы минимизировать STAC/provider API calls.
+- TTL-кеш scene-search, чтобы минимизировать STAC/provider API calls; текущий key не различает абсолютные time windows и search/detection capability, поэтому cache пока не считается корректным.
 - Общий raster cache: один и тот же product/asset/AOI не скачивается повторно.
 - Автоматическая сборка land/shoreline mask из URL или локального ZIP/SHP/GeoJSON.
 - Local-CFAR-style candidate detector с physical scale, local contrast и shape metrics; `confidence` — ranking score, не вероятность.
@@ -55,12 +55,17 @@ bash deploy_telegram_bot.sh --providers all
 ## Что пока не реализовано
 
 - Lock-файлы для конкурентного скачивания одного raster asset.
+- Полный cache key/capability revalidation и deterministic newest-scene selection.
+- Fail-closed Telegram authorization, user-scoped scene tokens, quotas и atomic state writes.
 - Актуальный CDSE STAC v1 provider contract и OData fallback.
+- Typed asset/auth/sidecar contract и secret-redacted provenance.
 - Калиброванный vessel detector, benchmark, uncertainty и физическая validation.
 - Интеграция effective `config/processing.yaml` в CLI/Telegram pipeline.
 - Правильный guard-cell CFAR и sensor-specific S1/S2 preprocessing.
 - Полноценный Sentinel-2 band stack B02/B03/B04/B08 + SCL/cloud/water mask.
 - Обработка ASF ZIP/GRD через SNAP/pyroSAR.
+
+Уточнённое ТЗ, план и каталог синтезированных признаков: [`docs/TECHNICAL_SPEC.md`](docs/TECHNICAL_SPEC.md), [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md), [`docs/FEATURE_CATALOG.md`](docs/FEATURE_CATALOG.md).
 
 ## Установка на сервер
 
@@ -76,7 +81,7 @@ TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash in
 bash install_telegram_bot.sh --providers all
 ```
 
-Provider-доступы задаются через `/opt/marine_track/.env` или environment; deploy проверяет их через provider preflight без сетевых запросов.
+Provider-доступы задаются через `/opt/marine_track/.env` или environment; deploy выполняет только offline import/config preflight. Он не подтверждает сеть, auth, quota, подписание или чтение raster; для operational release нужен отдельный live range-read canary.
 
 Профили provider-зависимостей:
 
@@ -145,7 +150,7 @@ MARINE_TRACK_AIS_MAX_DISTANCE_M=3000
 mmsi,time,lon,lat,sog_knots,cog_deg
 ```
 
-При совпадении detection ↔ AIS бот пишет `validation_status=ais_matched`, добавляет `validation.ais`, сохраняет AIS track в `metadata.ais.track`, рисует AIS track на overview/crop и использует AIS SOG/COG как внешний reference speed/heading, если собственная оценка не задана.
+При совпадении detection ↔ AIS текущий бот пишет `validation_status=ais_matched`, добавляет `validation.ais`, сохраняет AIS track в `metadata.ais.track`, рисует AIS track на overview/crop и может заполнить общие speed/heading. Это зафиксированный P0 semantic debt: целевая схема хранит AIS только в `reference.ais.*`, отдельно от спутниковой оценки и Kelvin proxy.
 
 ## Telegram workflow
 
