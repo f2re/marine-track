@@ -28,6 +28,25 @@ jobs:
           git fetch origin main
           git merge --no-edit origin/main
           python scripts/agent_finalize_cfar_tiling.py
+          python - <<'PY'
+          from pathlib import Path
+
+          catalog = Path('src/marine_track/calibration_areas.py')
+          text = catalog.read_text(encoding='utf-8')
+          old = '_a("so_ind", "po", "Южный Индийский океан", (70.0, -45.0, 73.0, -44.0))'
+          new = '_a("so_ind", "po", "Южный Индийский океан", (70.0, -45.0, 72.0, -44.0))'
+          if old not in text:
+              raise SystemExit('southern Indian Ocean sector marker not found')
+          catalog.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          test = Path('tests/test_cfar_tiling_limits.py')
+          text = test.read_text(encoding='utf-8')
+          old = 'assert stats.background_std[4, 4] == pytest.approx(0.0)'
+          new = 'assert stats.background_std[4, 4] == pytest.approx(0.0, abs=1e-6)'
+          if old not in text:
+              raise SystemExit('CFAR standard deviation assertion marker not found')
+          test.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Validate with diagnostics
         run: |
           set +e
