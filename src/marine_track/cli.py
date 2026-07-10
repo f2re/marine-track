@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -7,6 +8,14 @@ from rich.console import Console
 from rich.table import Table
 
 from marine_track.cache_policy import cleanup_runtime
+from marine_track.calibration_phase2 import Phase2Targets
+from marine_track.calibration_phase2_evaluation import (
+    build_proposed_profile,
+    evaluate_phase2,
+    promote_proposed_profile,
+    rollback_profile,
+)
+from marine_track.calibration_phase2_tiles import generate_independent_tasks
 from marine_track.config import load_config
 from marine_track.land_mask_update import DEFAULT_LAND_MASK_SOURCE_URL
 from marine_track.land_mask_update import update_land_mask as build_land_mask
@@ -63,9 +72,9 @@ def run(
     sensor: Sensor = typer.Option(Sensor.AUTO),
     output: Path = typer.Option(Path("runs/latest")),
     max_results: int = typer.Option(50, min=1, max=500),
-    write_manifest: bool = typer.Option(True, help="Write asset manifest for the selected scenes"),
+    write_manifest: bool = typer.Option(True, help="Write asset manifest for selected scenes"),
 ) -> None:
-    """Run the current MVP stage: scene search, provenance and asset manifest."""
+    """Run scene search, provenance and asset manifest."""
     result = run_search_stage(
         aoi=aoi,
         start=parse_utc_datetime(start),
@@ -111,6 +120,108 @@ def detect_raster(
     write_csv(detections, output.with_suffix(".csv"))
     write_parquet(detections, output.with_suffix(".parquet"))
     console.print(f"[green]Saved {len(detections)} detections to {output}[/green]")
+
+
+@app.command("calibration-generate-tiles")
+def calibration_generate_tiles(
+    output_dir: Path = typer.Option(Path("runs/telegram"), help="Telegram/output directory"),
+    context_geojson: Path | None = typer.Option(
+        None,
+        exists=True,
+        readable=True,
+        help="Optional GeoJSON with stratum=coastline|port|offshore_structure",
+    ),
+    tile_size_px: int = typer.Option(768, min=384, max=1536),
+    max_tiles_per_scene: int = typer.Option(24, min=1, max=500),
+    force: bool = typer.Option(False, help="Rebuild manifest and tasks"),
+) -> None:
+    """Generate detector-independent, scene-grouped calibration tiles."""
+    targets = Phase2Targets(
+        tile_size_px=tile_size_px,
+        max_tiles_per_scene=max_tiles_per_scene,
+    )
+    manifest = generate_independent_tasks(
+        output_dir,
+        targets=targets,
+        context_geojson=context_geojson,
+        force=force,
+    )
+    console.print(
+        f"[green]Generated {len(manifest.get('tasks', []))} phase-2 tiles[/green]\n"
+        f"strata={manifest.get('counts', {})}\nsplits={manifest.get('splits', {})}"
+    )
+
+
+@app.command("calibration-evaluate")
+def calibration_evaluate(
+    output_dir: Path = typer.Option(Path("runs/telegram")),
+    bootstrap_samples: int = typer.Option(300, min=10, max=5000),
+    json_output: Path | None = typer.Option(None, help="Optional copy of evaluation JSON"),
+) -> None:
+    """Evaluate phase-2 labels on fixed scene/pass groups."""
+    result = evaluate_phase2(output_dir, bootstrap_samples=bootstrap_samples)
+    if json_output:
+        json_output.parent.mkdir(parents=True, exist_ok=True)
+        json_output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    table = Table(title="Calibration phase 2")
+    table.add_column("split")
+    table.add_column("n")
+    table.add_column("groups")
+    table.add_column("F1")
+    table.add_column("POD")
+    table.add_column("FAR")
+    table.add_column("CSI")
+    for split in ("train", "calibration", "test"):
+        metrics = result["splits"][split]
+        table.add_row(
+            split,
+            str(metrics["count"]),
+            str(metrics["groups"]),
+            f"{metrics['f1']:.3f}",
+            f"{metrics['pod']:.3f}",
+            f"{metrics['far']:.3f}",
+            f"{metrics['csi']:.3f}",
+        )
+    console.print(table)
+
+
+@app.command("calibration-propose")
+def calibration_propose(
+    output_dir: Path = typer.Option(Path("runs/telegram")),
+) -> None:
+    """Build a versioned profile without activating it."""
+    profile = build_proposed_profile(output_dir)
+    console.print(
+        f"profile={profile['profile_id']} status={profile['status']} "
+        f"gate={profile['promotion_gate']['passed']}"
+    )
+
+
+@app.command("calibration-promote")
+def calibration_promote(
+    output_dir: Path = typer.Option(Path("runs/telegram")),
+    min_test_groups: int = typer.Option(3, min=1),
+    min_validation_groups: int = typer.Option(3, min=1),
+    min_improvement: float = typer.Option(0.01, min=0.0, max=1.0),
+) -> None:
+    """Activate a post-filter profile only after held-out gate success."""
+    targets = Phase2Targets(
+        min_test_groups=min_test_groups,
+        min_validation_groups=min_validation_groups,
+        min_improvement=min_improvement,
+    )
+    profile = promote_proposed_profile(output_dir, targets)
+    console.print(f"[green]Activated profile {profile['profile_id']}[/green]")
+
+
+@app.command("calibration-rollback")
+def calibration_rollback(
+    output_dir: Path = typer.Option(Path("runs/telegram")),
+    profile_id: str | None = typer.Option(None, help="History profile id; latest when omitted"),
+) -> None:
+    """Restore a previous active calibration profile."""
+    profile = rollback_profile(output_dir, profile_id)
+    console.print(f"[green]Rolled back to profile {profile['profile_id']}[/green]")
 
 
 @app.command("update-land-mask")
