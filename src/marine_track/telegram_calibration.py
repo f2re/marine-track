@@ -23,6 +23,8 @@ from marine_track.calibration import (
 )
 from marine_track.telegram_calibration_phase2 import (
     ACTION_OPEN as PHASE2_ACTION_OPEN,
+)
+from marine_track.telegram_calibration_phase2 import (
     phase2_callback,
 )
 from marine_track.telegram_config import TelegramBotConfig
