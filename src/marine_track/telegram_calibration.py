@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from marine_track.calibration import (
 from marine_track.telegram_config import TelegramBotConfig
 from marine_track.telegram_ui import ACTION_MENU, MENU_CALLBACK_PREFIX
 
+LOGGER = logging.getLogger(__name__)
 CALIBRATION_CALLBACK_PREFIX = "mtcal"
 ACTION_OPEN = "open"
 ACTION_NEXT = "next"
@@ -232,8 +234,8 @@ async def calibration_callback(
             return
         try:
             await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        except Exception as exc:  # pragma: no cover - Telegram message state dependent
+            LOGGER.debug("Unable to clear calibration keyboard for task %s: %s", task_id, exc)
         await query.message.reply_text(
             answer_feedback(result),
             parse_mode=ParseMode.HTML,
