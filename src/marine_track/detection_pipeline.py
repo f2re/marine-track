@@ -12,7 +12,12 @@ import numpy as np
 
 from marine_track.ais import match_detection_to_ais, read_ais_csv
 from marine_track.estimation import bearing_deg, speed_from_kelvin_wavelength
-from marine_track.geospatial import RasterGeoContext, lonlat_to_pixel, pixel_scale_m, pixel_to_lonlat
+from marine_track.geospatial import (
+    RasterGeoContext,
+    lonlat_to_pixel,
+    pixel_scale_m,
+    pixel_to_lonlat,
+)
 from marine_track.models import HeadingMethod, SpeedMethod, VesselDetection
 from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.raster_detection import detect_candidates_from_raster

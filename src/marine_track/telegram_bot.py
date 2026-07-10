@@ -10,29 +10,51 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from marine_track.calibration import load_calibration_profile
 from marine_track.telegram_calibration import (
     CALIBRATION_CALLBACK_PREFIX,
-    calibration_callback as admin_calibration_callback,
-    calibration_command as admin_calibration_command,
     calibration_menu_markup,
     calibration_targets,
     calibration_warning_text,
     is_calibration_admin,
     startup_calibration_required,
 )
+from marine_track.telegram_calibration import (
+    calibration_callback as admin_calibration_callback,
+)
+from marine_track.telegram_calibration import (
+    calibration_command as admin_calibration_command,
+)
 from marine_track.telegram_config import TelegramBotConfig, load_telegram_config
 from marine_track.telegram_detection import (
     DETECT_CALLBACK_PREFIX,
+)
+from marine_track.telegram_detection import (
     detect_bbox_command as scene_detect_bbox_command,
+)
+from marine_track.telegram_detection import (
     detect_callback as scene_detect_callback,
+)
+from marine_track.telegram_detection import (
     detect_command as scene_detect_command,
+)
+from marine_track.telegram_detection import (
     detect_default_aoi as scene_detect_default_aoi,
 )
 from marine_track.telegram_scene_browser import (
     CALLBACK_PREFIX,
     PAGE_CALLBACK_PREFIX,
+)
+from marine_track.telegram_scene_browser import (
     bbox_dates_command as scene_bbox_dates_command,
+)
+from marine_track.telegram_scene_browser import (
     image_callback as scene_image_callback,
+)
+from marine_track.telegram_scene_browser import (
     image_command as scene_image_command,
+)
+from marine_track.telegram_scene_browser import (
     list_dates_command as scene_dates_command,
+)
+from marine_track.telegram_scene_browser import (
     scene_page_callback as scene_scene_page_callback,
 )
 from marine_track.telegram_ui import (
