@@ -1,15 +1,17 @@
 name: Finalize CFAR tiling and limits
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/guard-cfar-tiled-limits-20260710
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
 
 jobs:
   finalize:
+    if: github.head_ref == 'agent/guard-cfar-tiled-limits-20260710'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
