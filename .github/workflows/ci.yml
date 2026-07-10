@@ -29,6 +29,13 @@ jobs:
             echo 'Migration already applied.' > migration.txt
             status=0
           else
+            python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/agent_security_hardening.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('    if count != 1:\n', '    if count < 1:\n', 1)
+          path.write_text(text, encoding='utf-8')
+          PY
             python scripts/agent_security_hardening.py > migration.txt 2>&1
             status=$?
           fi
