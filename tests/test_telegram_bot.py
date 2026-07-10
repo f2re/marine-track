@@ -1,10 +1,14 @@
+import pytest
+
 from marine_track.models import Sensor
 from marine_track.telegram_config import parse_admin_ids
 from marine_track.telegram_scene_browser import bbox_geojson, parse_scene_hours, parse_scene_sensor
 
 
 def test_id_list_parser():
-    assert parse_admin_ids("123, 456;789 bad") == {123, 456, 789}
+    assert parse_admin_ids("123, 456;789") == {123, 456, 789}
+    with pytest.raises(RuntimeError, match="non-integer"):
+        parse_admin_ids("123 bad")
 
 
 def test_sensor_aliases():
