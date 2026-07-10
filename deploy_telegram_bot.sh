@@ -115,9 +115,11 @@ cleanup_staging() {
 }
 
 atomic_link() {
-  local target="$1" link="$2" temporary="${link}.new.$$"
+  local target="$1"
+  local link_path="$2"
+  local temporary="${link_path}.new.$$"
   ln -s "$target" "$temporary"
-  mv -Tf "$temporary" "$link"
+  mv -Tf "$temporary" "$link_path"
 }
 
 rollback() {
