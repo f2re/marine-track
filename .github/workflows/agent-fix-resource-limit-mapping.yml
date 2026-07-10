@@ -62,6 +62,15 @@ jobs:
 
           tests = Path('tests/test_cfar_tiling_limits.py')
           text = tests.read_text(encoding='utf-8')
+          fixture_old = '    config.write_text("resource_limits: []\\n", encoding="utf-8")\n'
+          fixture_new = '''    config.write_text(
+                  "ship_detection:\\n  sar: {}\\nresource_limits: []\\n",
+                  encoding="utf-8",
+              )
+          '''.replace('          ', '')
+          if fixture_old not in text:
+              raise SystemExit('malformed resource limit fixture marker not found')
+          text = text.replace(fixture_old, fixture_new, 1)
           old = '''    with pytest.raises(ResourceLimitError, match="resource_limits must be a mapping"):
                   load_resource_limits()
           '''.replace('          ', '')
