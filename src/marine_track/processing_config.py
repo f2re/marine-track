@@ -11,7 +11,7 @@ import yaml
 
 from marine_track.models import Sensor
 
-PROCESSING_CONFIG_SCHEMA_VERSION = 1
+PROCESSING_CONFIG_SCHEMA_VERSION = 2
 DEFAULT_PROCESSING_CONFIG = Path("config/processing.yaml")
 
 
@@ -27,6 +27,15 @@ class EffectiveDetectorConfig:
     local_window_px: int
     guard_window_px: int
     min_contrast_sigma: float
+    min_training_fraction: float
+    tile_size_px: int
+    tile_overlap_px: int
+    normalization_sample_pixels: int
+    max_raster_pixels: int
+    max_tiles: int
+    max_candidates: int
+    max_aoi_area_km2: float
+    max_aoi_vertices: int
     preprocessing: dict[str, Any]
     source_path: str
     config_hash: str
@@ -39,6 +48,13 @@ class EffectiveDetectorConfig:
             "local_window_px": self.local_window_px,
             "guard_window_px": self.guard_window_px,
             "min_contrast_sigma": self.min_contrast_sigma,
+            "min_training_fraction": self.min_training_fraction,
+            "tile_size_px": self.tile_size_px,
+            "tile_overlap_px": self.tile_overlap_px,
+            "normalization_sample_pixels": self.normalization_sample_pixels,
+            "max_raster_pixels": self.max_raster_pixels,
+            "max_tiles": self.max_tiles,
+            "max_candidates": self.max_candidates,
         }
 
     def as_report_dict(self) -> dict[str, Any]:
@@ -91,6 +107,15 @@ def load_effective_detector_config(
     local_window_px: int | None = None,
     guard_window_px: int | None = None,
     min_contrast_sigma: float | None = None,
+    min_training_fraction: float | None = None,
+    tile_size_px: int | None = None,
+    tile_overlap_px: int | None = None,
+    normalization_sample_pixels: int | None = None,
+    max_raster_pixels: int | None = None,
+    max_tiles: int | None = None,
+    max_candidates: int | None = None,
+    max_aoi_area_km2: float | None = None,
+    max_aoi_vertices: int | None = None,
 ) -> EffectiveDetectorConfig:
     concrete_sensor = canonical_sensor(sensor)
     resolved, payload = load_processing_yaml(path)
@@ -109,6 +134,12 @@ def load_effective_detector_config(
     if not isinstance(preprocessing, dict):
         raise ValueError(f"preprocessing.{concrete_sensor.value} must be a mapping")
 
+    limits_root = payload.get("resource_limits")
+    if limits_root is None:
+        limits_root = {}
+    elif not isinstance(limits_root, dict):
+        raise ValueError("resource_limits must be a mapping")
+
     method = str(detector.get("method", "local_cfar")).strip().lower()
     values: dict[str, int | float] = {
         "threshold_sigma": _number(detector, "threshold_sigma", 3.5, float),
@@ -117,6 +148,40 @@ def load_effective_detector_config(
         "local_window_px": _number(detector, "local_window_px", 31, int),
         "guard_window_px": _number(detector, "guard_window_px", 5, int),
         "min_contrast_sigma": _number(detector, "min_contrast_sigma", 0.0, float),
+        "min_training_fraction": _number(
+            detector,
+            "min_training_fraction",
+            0.5,
+            float,
+        ),
+        "tile_size_px": _number(preprocessing, "tile_size_px", 1024, int),
+        "tile_overlap_px": _number(preprocessing, "tile_overlap_px", 128, int),
+        "normalization_sample_pixels": _number(
+            preprocessing,
+            "normalization_sample_pixels",
+            1_000_000,
+            int,
+        ),
+        "max_aoi_area_km2": _number(
+            limits_root,
+            "max_aoi_area_km2",
+            25_000.0,
+            float,
+        ),
+        "max_aoi_vertices": _number(
+            limits_root,
+            "max_aoi_vertices",
+            5_000,
+            int,
+        ),
+        "max_raster_pixels": _number(
+            limits_root,
+            "max_raster_pixels",
+            2_000_000_000,
+            int,
+        ),
+        "max_tiles": _number(limits_root, "max_tiles", 20_000, int),
+        "max_candidates": _number(limits_root, "max_candidates", 10_000, int),
     }
 
     env_spec: dict[str, tuple[str, type[int] | type[float]]] = {
@@ -126,6 +191,21 @@ def load_effective_detector_config(
         "local_window_px": ("MARINE_TRACK_DETECTION_LOCAL_WINDOW_PX", int),
         "guard_window_px": ("MARINE_TRACK_DETECTION_GUARD_WINDOW_PX", int),
         "min_contrast_sigma": ("MARINE_TRACK_DETECTION_MIN_CONTRAST_SIGMA", float),
+        "min_training_fraction": (
+            "MARINE_TRACK_CFAR_MIN_TRAINING_FRACTION",
+            float,
+        ),
+        "tile_size_px": ("MARINE_TRACK_DETECTION_TILE_SIZE_PX", int),
+        "tile_overlap_px": ("MARINE_TRACK_DETECTION_TILE_OVERLAP_PX", int),
+        "normalization_sample_pixels": (
+            "MARINE_TRACK_NORMALIZATION_SAMPLE_PIXELS",
+            int,
+        ),
+        "max_aoi_area_km2": ("MARINE_TRACK_MAX_AOI_AREA_KM2", float),
+        "max_aoi_vertices": ("MARINE_TRACK_MAX_AOI_VERTICES", int),
+        "max_raster_pixels": ("MARINE_TRACK_MAX_RASTER_PIXELS", int),
+        "max_tiles": ("MARINE_TRACK_MAX_TILES", int),
+        "max_candidates": ("MARINE_TRACK_MAX_CANDIDATES", int),
     }
     for key, (env_name, caster) in env_spec.items():
         raw = os.getenv(env_name)
@@ -142,6 +222,15 @@ def load_effective_detector_config(
         "local_window_px": local_window_px,
         "guard_window_px": guard_window_px,
         "min_contrast_sigma": min_contrast_sigma,
+        "min_training_fraction": min_training_fraction,
+        "tile_size_px": tile_size_px,
+        "tile_overlap_px": tile_overlap_px,
+        "normalization_sample_pixels": normalization_sample_pixels,
+        "max_aoi_area_km2": max_aoi_area_km2,
+        "max_aoi_vertices": max_aoi_vertices,
+        "max_raster_pixels": max_raster_pixels,
+        "max_tiles": max_tiles,
+        "max_candidates": max_candidates,
     }
     for key, value in explicit.items():
         if value is not None:
@@ -154,6 +243,15 @@ def load_effective_detector_config(
         "local_window_px": int(values["local_window_px"]),
         "guard_window_px": int(values["guard_window_px"]),
         "min_contrast_sigma": float(values["min_contrast_sigma"]),
+        "min_training_fraction": float(values["min_training_fraction"]),
+        "tile_size_px": int(values["tile_size_px"]),
+        "tile_overlap_px": int(values["tile_overlap_px"]),
+        "normalization_sample_pixels": int(values["normalization_sample_pixels"]),
+        "max_aoi_area_km2": float(values["max_aoi_area_km2"]),
+        "max_aoi_vertices": int(values["max_aoi_vertices"]),
+        "max_raster_pixels": int(values["max_raster_pixels"]),
+        "max_tiles": int(values["max_tiles"]),
+        "max_candidates": int(values["max_candidates"]),
     }
     _validate_detector(method, normalized)
 
@@ -164,11 +262,15 @@ def load_effective_detector_config(
         "method": method,
         "detector": normalized,
         "preprocessing": preprocessing,
+        "resource_limits": limits_root,
     }
     config_hash = hashlib.sha256(
-        json.dumps(hash_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        json.dumps(
+            hash_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
     ).hexdigest()
 
     return EffectiveDetectorConfig(
@@ -207,6 +309,15 @@ def _validate_detector(method: str, values: dict[str, int | float]) -> None:
     local_window = int(values["local_window_px"])
     guard_window = int(values["guard_window_px"])
     min_contrast = float(values["min_contrast_sigma"])
+    min_training_fraction = float(values["min_training_fraction"])
+    tile_size = int(values["tile_size_px"])
+    tile_overlap = int(values["tile_overlap_px"])
+    normalization_sample_pixels = int(values["normalization_sample_pixels"])
+    max_aoi_area_km2 = float(values["max_aoi_area_km2"])
+    max_aoi_vertices = int(values["max_aoi_vertices"])
+    max_raster_pixels = int(values["max_raster_pixels"])
+    max_tiles = int(values["max_tiles"])
+    max_candidates = int(values["max_candidates"])
 
     if threshold_sigma <= 0 or threshold_sigma > 100:
         raise ValueError("threshold_sigma must be in (0, 100]")
@@ -220,3 +331,24 @@ def _validate_detector(method: str, values: dict[str, int | float]) -> None:
         raise ValueError("guard_window_px must be smaller than local_window_px")
     if min_contrast < 0 or min_contrast > 100:
         raise ValueError("min_contrast_sigma must be in [0, 100]")
+    if not 0.0 < min_training_fraction <= 1.0:
+        raise ValueError("min_training_fraction must be in (0, 1]")
+    if tile_size < 128:
+        raise ValueError("tile_size_px must be >= 128")
+    if tile_overlap < 0 or tile_overlap >= tile_size:
+        raise ValueError("tile_overlap_px must be in [0, tile_size_px)")
+    # The ownership boundary lies near the midpoint of the overlap. Each
+    # owning tile therefore needs two CFAR radii of overlap so that its
+    # complete outer training window is available at the boundary.
+    minimum_overlap = 2 * (local_window // 2)
+    if local_window > 0 and tile_overlap < minimum_overlap:
+        raise ValueError(
+            "tile_overlap_px is too small for the CFAR training/guard halo; "
+            f"minimum is {minimum_overlap}"
+        )
+    if normalization_sample_pixels < 10_000:
+        raise ValueError("normalization_sample_pixels must be >= 10000")
+    if max_aoi_area_km2 <= 0 or max_aoi_vertices < 4:
+        raise ValueError("AOI resource limits must be positive and allow a polygon")
+    if max_raster_pixels < 1 or max_tiles < 1 or max_candidates < 1:
+        raise ValueError("processing resource limits must be positive")

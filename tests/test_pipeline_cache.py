@@ -8,7 +8,7 @@ def test_run_search_stage_reuses_scene_search_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("MARINE_TRACK_CACHE_DIR", str(tmp_path / "cache"))
     aoi = tmp_path / "aoi.geojson"
     aoi.write_text(
-        '{"type":"FeatureCollection","features":[]}',
+        '{"type":"Polygon","coordinates":[[[30,43],[30.1,43],[30.1,43.1],[30,43.1],[30,43]]]}',
         encoding="utf-8",
     )
     start = datetime(2026, 7, 6, 0, 0, tzinfo=timezone.utc)

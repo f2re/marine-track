@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,49 @@ class LandMaskError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class PreparedLandMask:
+    geometries: list[dict[str, Any]]
+    source: str
+    shoreline_buffer_m: float
+
+
+def prepare_land_mask(
+    land_mask_geojson: str | Path | None,
+    crs: Any,
+    shoreline_buffer_m: float = 0.0,
+) -> PreparedLandMask | None:
+    """Load, reproject and buffer a land mask once for repeated tile use."""
+
+    if not land_mask_geojson:
+        return None
+    path = Path(land_mask_geojson)
+    if not path.is_file():
+        raise LandMaskError(f"land mask GeoJSON not found: {path}")
+    geometries = load_geojson_geometries(path)
+    if not geometries:
+        raise LandMaskError(f"land mask GeoJSON has no geometries: {path}")
+    projected = project_and_buffer_geometries(geometries, crs, shoreline_buffer_m)
+    return PreparedLandMask(
+        geometries=projected,
+        source=str(path),
+        shoreline_buffer_m=float(shoreline_buffer_m),
+    )
+
+
+def apply_prepared_land_mask(
+    image: np.ndarray,
+    transform: Any,
+    prepared: PreparedLandMask | None,
+) -> np.ndarray:
+    if prepared is None:
+        return image
+    mask = rasterize_geometries(prepared.geometries, image.shape, transform)
+    output = image.copy()
+    output[mask] = np.nan
+    return output
+
+
 def apply_land_mask(
     image: np.ndarray,
     transform: Any,
@@ -18,27 +62,10 @@ def apply_land_mask(
     land_mask_geojson: str | Path | None,
     shoreline_buffer_m: float = 0.0,
 ) -> np.ndarray:
-    """Set land/shoreline pixels to NaN using a GeoJSON polygon mask.
+    """Set land/shoreline pixels to NaN using a GeoJSON polygon mask."""
 
-    The mask file is expected to be in EPSG:4326 lon/lat coordinates. It is
-    reprojected to the raster CRS before rasterization. If the file path is empty,
-    the input image is returned unchanged.
-    """
-    if not land_mask_geojson:
-        return image
-    path = Path(land_mask_geojson)
-    if not path.is_file():
-        raise LandMaskError(f"land mask GeoJSON not found: {path}")
-
-    geometries = load_geojson_geometries(path)
-    if not geometries:
-        raise LandMaskError(f"land mask GeoJSON has no geometries: {path}")
-
-    projected = project_and_buffer_geometries(geometries, crs, shoreline_buffer_m)
-    mask = rasterize_geometries(projected, image.shape, transform)
-    output = image.copy()
-    output[mask] = np.nan
-    return output
+    prepared = prepare_land_mask(land_mask_geojson, crs, shoreline_buffer_m)
+    return apply_prepared_land_mask(image, transform, prepared)
 
 
 def load_geojson_geometries(path: Path) -> list[dict[str, Any]]:
@@ -49,7 +76,11 @@ def load_geojson_geometries(path: Path) -> list[dict[str, Any]]:
     geo_type = payload.get("type")
     if geo_type == "FeatureCollection":
         features = payload.get("features") or []
-        return [feature["geometry"] for feature in features if isinstance(feature, dict) and feature.get("geometry")]
+        return [
+            feature["geometry"]
+            for feature in features
+            if isinstance(feature, dict) and feature.get("geometry")
+        ]
     if geo_type == "Feature":
         geometry = payload.get("geometry")
         return [geometry] if isinstance(geometry, dict) else []
