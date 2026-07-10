@@ -1,0 +1,43 @@
+[Unit]
+Description=Marine Track Telegram Bot
+After=network-online.target
+Wants=network-online.target
+ConditionPathIsDirectory=/opt/marine_track/current
+
+[Service]
+Type=simple
+User=marine-track
+Group=marine-track
+EnvironmentFile=/etc/marine-track/marine-track.env
+WorkingDirectory=/opt/marine_track/current
+ExecStartPre=/opt/marine_track/current/.venv/bin/python /opt/marine_track/current/runtime_check.py
+ExecStart=/opt/marine_track/current/.venv/bin/marine-track-bot
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
+TimeoutStopSec=45
+KillSignal=SIGINT
+UMask=0027
+
+StateDirectory=marine-track
+CacheDirectory=marine-track
+LogsDirectory=marine-track
+ReadWritePaths=/var/lib/marine-track /var/cache/marine-track /var/log/marine-track
+ReadOnlyPaths=/opt/marine_track/releases
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

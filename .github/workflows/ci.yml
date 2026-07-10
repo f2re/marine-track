@@ -23,6 +23,8 @@ jobs:
           pip install -e .[dev]
       - name: Compile
         run: python -m compileall -q src runtime_check.py
+      - name: Shell syntax
+        run: bash -n install_telegram_bot.sh deploy_telegram_bot.sh
       - name: Lint
         run: |
           set +e
