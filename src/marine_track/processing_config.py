@@ -34,6 +34,8 @@ class EffectiveDetectorConfig:
     max_raster_pixels: int
     max_tiles: int
     max_candidates: int
+    max_aoi_area_km2: float
+    max_aoi_vertices: int
     preprocessing: dict[str, Any]
     source_path: str
     config_hash: str
@@ -112,6 +114,8 @@ def load_effective_detector_config(
     max_raster_pixels: int | None = None,
     max_tiles: int | None = None,
     max_candidates: int | None = None,
+    max_aoi_area_km2: float | None = None,
+    max_aoi_vertices: int | None = None,
 ) -> EffectiveDetectorConfig:
     concrete_sensor = canonical_sensor(sensor)
     resolved, payload = load_processing_yaml(path)
@@ -156,6 +160,18 @@ def load_effective_detector_config(
             1_000_000,
             int,
         ),
+        "max_aoi_area_km2": _number(
+            limits_root,
+            "max_aoi_area_km2",
+            25_000.0,
+            float,
+        ),
+        "max_aoi_vertices": _number(
+            limits_root,
+            "max_aoi_vertices",
+            5_000,
+            int,
+        ),
         "max_raster_pixels": _number(
             limits_root,
             "max_raster_pixels",
@@ -183,6 +199,8 @@ def load_effective_detector_config(
             "MARINE_TRACK_NORMALIZATION_SAMPLE_PIXELS",
             int,
         ),
+        "max_aoi_area_km2": ("MARINE_TRACK_MAX_AOI_AREA_KM2", float),
+        "max_aoi_vertices": ("MARINE_TRACK_MAX_AOI_VERTICES", int),
         "max_raster_pixels": ("MARINE_TRACK_MAX_RASTER_PIXELS", int),
         "max_tiles": ("MARINE_TRACK_MAX_TILES", int),
         "max_candidates": ("MARINE_TRACK_MAX_CANDIDATES", int),
@@ -206,6 +224,8 @@ def load_effective_detector_config(
         "tile_size_px": tile_size_px,
         "tile_overlap_px": tile_overlap_px,
         "normalization_sample_pixels": normalization_sample_pixels,
+        "max_aoi_area_km2": max_aoi_area_km2,
+        "max_aoi_vertices": max_aoi_vertices,
         "max_raster_pixels": max_raster_pixels,
         "max_tiles": max_tiles,
         "max_candidates": max_candidates,
@@ -225,6 +245,8 @@ def load_effective_detector_config(
         "tile_size_px": int(values["tile_size_px"]),
         "tile_overlap_px": int(values["tile_overlap_px"]),
         "normalization_sample_pixels": int(values["normalization_sample_pixels"]),
+        "max_aoi_area_km2": float(values["max_aoi_area_km2"]),
+        "max_aoi_vertices": int(values["max_aoi_vertices"]),
         "max_raster_pixels": int(values["max_raster_pixels"]),
         "max_tiles": int(values["max_tiles"]),
         "max_candidates": int(values["max_candidates"]),
@@ -289,6 +311,8 @@ def _validate_detector(method: str, values: dict[str, int | float]) -> None:
     tile_size = int(values["tile_size_px"])
     tile_overlap = int(values["tile_overlap_px"])
     normalization_sample_pixels = int(values["normalization_sample_pixels"])
+    max_aoi_area_km2 = float(values["max_aoi_area_km2"])
+    max_aoi_vertices = int(values["max_aoi_vertices"])
     max_raster_pixels = int(values["max_raster_pixels"])
     max_tiles = int(values["max_tiles"])
     max_candidates = int(values["max_candidates"])
@@ -311,7 +335,10 @@ def _validate_detector(method: str, values: dict[str, int | float]) -> None:
         raise ValueError("tile_size_px must be >= 128")
     if tile_overlap < 0 or tile_overlap >= tile_size:
         raise ValueError("tile_overlap_px must be in [0, tile_size_px)")
-    minimum_overlap = (local_window // 2) + (max(guard_window, 1) // 2)
+    # The ownership boundary lies near the midpoint of the overlap. Each
+    # owning tile therefore needs two CFAR radii of overlap so that its
+    # complete outer training window is available at the boundary.
+    minimum_overlap = 2 * (local_window // 2)
     if local_window > 0 and tile_overlap < minimum_overlap:
         raise ValueError(
             "tile_overlap_px is too small for the CFAR training/guard halo; "
@@ -319,5 +346,7 @@ def _validate_detector(method: str, values: dict[str, int | float]) -> None:
         )
     if normalization_sample_pixels < 10_000:
         raise ValueError("normalization_sample_pixels must be >= 10000")
+    if max_aoi_area_km2 <= 0 or max_aoi_vertices < 4:
+        raise ValueError("AOI resource limits must be positive and allow a polygon")
     if max_raster_pixels < 1 or max_tiles < 1 or max_candidates < 1:
-        raise ValueError("resource limits must be positive")
+        raise ValueError("processing resource limits must be positive")

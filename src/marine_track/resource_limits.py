@@ -89,7 +89,19 @@ def validate_geojson_payload(
     if not geometries:
         raise ResourceLimitError("AOI GeoJSON does not contain any geometry")
 
-    vertex_count = sum(_count_vertices(geometry) for geometry in geometries)
+    coordinate_pairs = [
+        pair for geometry in geometries for pair in _iter_coordinate_pairs(geometry)
+    ]
+    if not coordinate_pairs:
+        raise ResourceLimitError("AOI GeoJSON has no coordinate pairs")
+    for longitude, latitude in coordinate_pairs:
+        if not math.isfinite(longitude) or not math.isfinite(latitude):
+            raise ResourceLimitError("AOI contains non-finite coordinates")
+        if not -180.0 <= longitude <= 180.0 or not -90.0 <= latitude <= 90.0:
+            raise ResourceLimitError(
+                f"AOI coordinate outside WGS84 bounds: {longitude}, {latitude}"
+            )
+    vertex_count = len(coordinate_pairs)
     if vertex_count > effective.max_aoi_vertices:
         raise ResourceLimitError(
             f"AOI has {vertex_count} vertices; configured limit is "
@@ -105,10 +117,7 @@ def validate_geojson_payload(
         if geometry.is_empty:
             continue
         if not geometry.is_valid:
-            repaired = geometry.buffer(0)
-            if repaired.is_empty or not repaired.is_valid:
-                raise ResourceLimitError("AOI geometry is topologically invalid")
-            geometry = repaired
+            raise ResourceLimitError("AOI geometry is topologically invalid")
         parsed.append(geometry)
     if not parsed:
         raise ResourceLimitError("AOI geometry is empty")
@@ -197,22 +206,27 @@ def _extract_geometries(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [payload] if isinstance(geo_type, str) else []
 
 
-def _count_vertices(value: Any) -> int:
-    if not isinstance(value, dict):
-        return 0
-    return _count_coordinate_nodes(value.get("coordinates"))
-
-
-def _count_coordinate_nodes(value: Any) -> int:
+def _iter_coordinate_pairs(value: Any):
+    if isinstance(value, dict):
+        coordinates = value.get("coordinates")
+        if coordinates is not None:
+            yield from _iter_coordinate_pairs(coordinates)
+        geometries = value.get("geometries")
+        if isinstance(geometries, list):
+            for geometry in geometries:
+                yield from _iter_coordinate_pairs(geometry)
+        return
     if not isinstance(value, list):
-        return 0
+        return
     if (
         len(value) >= 2
         and isinstance(value[0], (int, float))
         and isinstance(value[1], (int, float))
     ):
-        return 1
-    return sum(_count_coordinate_nodes(item) for item in value)
+        yield float(value[0]), float(value[1])
+        return
+    for item in value:
+        yield from _iter_coordinate_pairs(item)
 
 
 _GEOD = Geod(ellps="WGS84")

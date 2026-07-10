@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import math
 import os
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 
@@ -15,7 +16,11 @@ from marine_track.detection import PixelObject, adaptive_threshold_candidates
 from marine_track.geospatial import RasterGeoContext, pixel_scale_m, pixel_to_lonlat
 from marine_track.land_mask import apply_prepared_land_mask, prepare_land_mask
 from marine_track.models import VesselDetection
-from marine_track.resource_limits import ResourceLimits, validate_raster_workload
+from marine_track.resource_limits import (
+    ResourceLimitError,
+    ResourceLimits,
+    validate_raster_workload,
+)
 
 NORMALIZATION_LOW_PERCENTILE = 2.0
 NORMALIZATION_HIGH_PERCENTILE = 98.0
@@ -148,7 +153,7 @@ def detect_candidates_from_raster(
                     }
                 )
                 if len(raw_candidates) > limits.max_candidates:
-                    raise ValueError(
+                    raise ResourceLimitError(
                         f"candidate count exceeds configured limit {limits.max_candidates}"
                     )
 
