@@ -20,6 +20,7 @@ class TelegramBotConfig:
     detection_max_crops: int
     land_mask_geojson: Path | None
     shoreline_buffer_m: int
+    allow_public_access: bool = False
     calibration_min_labels: int = 20
     calibration_min_positive: int = 5
     calibration_min_negative: int = 5
@@ -36,8 +37,10 @@ def parse_admin_ids(raw: str | None) -> set[int]:
             continue
         try:
             ids.add(int(value))
-        except ValueError:
-            continue
+        except ValueError as exc:
+            raise RuntimeError(
+                f"TELEGRAM_ADMIN_IDS contains a non-integer value: {value!r}"
+            ) from exc
     return ids
 
 
@@ -50,6 +53,18 @@ def env_int(name: str, default: int, minimum: int = 1, maximum: int = 10000) -> 
     return max(minimum, min(maximum, value))
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    raise RuntimeError(f"{name} must be boolean, got {raw!r}")
+
+
 def env_optional_path(name: str) -> Path | None:
     raw = os.getenv(name, "").strip()
     return Path(raw) if raw else None
@@ -59,6 +74,9 @@ def load_telegram_config() -> TelegramBotConfig:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is empty. Set it in .env before startup.")
+
+    admin_ids = parse_admin_ids(os.getenv("TELEGRAM_ADMIN_IDS"))
+    allow_public_access = env_bool("MARINE_TRACK_ALLOW_PUBLIC_BOT", False)
 
     sensor_raw = os.getenv("MARINE_TRACK_DEFAULT_SENSOR", Sensor.AUTO.value).strip().lower()
     try:
@@ -72,7 +90,7 @@ def load_telegram_config() -> TelegramBotConfig:
 
     return TelegramBotConfig(
         token=token,
-        admin_ids=parse_admin_ids(os.getenv("TELEGRAM_ADMIN_IDS")),
+        admin_ids=admin_ids,
         default_aoi=Path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson")),
         output_dir=Path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram")),
         default_sensor=default_sensor,
@@ -82,6 +100,7 @@ def load_telegram_config() -> TelegramBotConfig:
         detection_max_crops=env_int("MARINE_TRACK_DETECTION_MAX_CROPS", 10, 0, 100),
         land_mask_geojson=env_optional_path("MARINE_TRACK_LAND_MASK_GEOJSON"),
         shoreline_buffer_m=env_int("MARINE_TRACK_SHORELINE_BUFFER_M", 500, 0, 100_000),
+        allow_public_access=allow_public_access,
         calibration_min_labels=calibration_min_labels,
         calibration_min_positive=calibration_min_positive,
         calibration_min_negative=calibration_min_negative,

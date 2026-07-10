@@ -39,6 +39,10 @@ def effective_user_id(update: Update) -> int:
     return int(getattr(update.effective_user, "id", 0) or 0)
 
 
+def effective_chat_id(update: Update) -> int:
+    return int(getattr(update.effective_chat, "id", 0) or 0)
+
+
 def menu_for_user(update: Update, config: TelegramBotConfig):
     count = len(get_saved_bboxes(config.output_dir, effective_user_id(update)))
     return main_menu_markup(has_last_bbox=count > 0, bbox_count=count)
@@ -114,6 +118,8 @@ async def detect_default_aoi(update: Update, context: ContextTypes.DEFAULT_TYPE,
             result.scenes,
             result.scenes_json,
             result.asset_manifest,
+            owner_user_id=effective_user_id(update),
+            owner_chat_id=effective_chat_id(update),
             aoi_geojson=aoi_geojson,
         )
     except Exception as exc:
@@ -190,6 +196,8 @@ async def detect_bbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             result.scenes,
             result.scenes_json,
             result.asset_manifest,
+            owner_user_id=effective_user_id(update),
+            owner_chat_id=effective_chat_id(update),
             aoi_geojson=aoi_geojson,
         )
     except Exception as exc:
@@ -246,6 +254,8 @@ async def send_detection_by_token(update: Update, token: str, config: TelegramBo
             run_detection_for_token,
             token=token,
             output_dir=config.output_dir,
+            owner_user_id=effective_user_id(update),
+            owner_chat_id=effective_chat_id(update),
             max_crops=config.detection_max_crops,
             threshold_sigma=3.5,
             min_area_px=2,

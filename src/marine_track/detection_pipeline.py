@@ -68,6 +68,9 @@ def env_float(name: str, default: float, minimum: float, maximum: float) -> floa
 def run_detection_for_token(
     token: str,
     output_dir: Path,
+    *,
+    owner_user_id: int,
+    owner_chat_id: int,
     max_crops: int = 10,
     threshold_sigma: float = 3.5,
     min_area_px: int = 2,
@@ -89,7 +92,12 @@ def run_detection_for_token(
     )
 
     report_progress(progress_callback, "2/5 materialize · подготовка GeoTIFF/COG")
-    materialized = materialize_scene_from_token(token, output_dir)
+    materialized = materialize_scene_from_token(
+        token,
+        output_dir,
+        owner_user_id=owner_user_id,
+        owner_chat_id=owner_chat_id,
+    )
 
     report_progress(progress_callback, "3/5 detect · CFAR, scale, shape, wake/AIS")
     detections = detect_candidates_from_raster(

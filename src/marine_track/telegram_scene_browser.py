@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 import math
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ DETECT_CALLBACK_PREFIX = "mtdetect"
 PAGE_CALLBACK_PREFIX = "mtpg"
 SCENE_PAGE_SIZE = 6
 REGISTRY_FILE = "scene_registry.json"
+_REGISTRY_LOCK = threading.Lock()
 PREVIEW_KEYS = (
     "thumbnail",
     "rendered_preview",
@@ -47,6 +49,8 @@ DOCUMENT_EXTENSIONS = PHOTO_EXTENSIONS | {".tif", ".tiff"}
 @dataclass(frozen=True)
 class SceneRegistryRecord:
     token: str
+    owner_user_id: int
+    owner_chat_id: int
     provider: str
     sensor: str
     scene: dict[str, object]
@@ -102,9 +106,16 @@ def effective_user_id(update: Update) -> int:
     return int(getattr(update.effective_user, "id", 0) or 0)
 
 
-def scene_token(scene: Scene) -> str:
-    raw = f"{scene.provider}|{scene.sensor.value}|{scene.product_id}|{scene.acquisition_time.isoformat()}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+def effective_chat_id(update: Update) -> int:
+    return int(getattr(update.effective_chat, "id", 0) or 0)
+
+
+def scene_token(scene: Scene, owner_user_id: int, owner_chat_id: int) -> str:
+    raw = (
+        f"{owner_user_id}|{owner_chat_id}|{scene.provider}|{scene.sensor.value}|"
+        f"{scene.product_id}|{scene.acquisition_time.isoformat()}"
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
 
 def registry_path(output_dir: Path) -> Path:
@@ -124,7 +135,10 @@ def load_registry(output_dir: Path) -> dict[str, dict[str, object]]:
 
 def save_registry(output_dir: Path, registry: dict[str, dict[str, object]]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    registry_path(output_dir).write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
+    path = registry_path(output_dir)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
 
 
 def register_scenes(
@@ -134,34 +148,50 @@ def register_scenes(
     scenes: list[Scene],
     scenes_json: Path,
     asset_manifest: Path | None,
+    *,
+    owner_user_id: int,
+    owner_chat_id: int,
     aoi_geojson: dict[str, object] | None = None,
     search_hours: int | None = None,
 ) -> list[str]:
-    registry = load_registry(output_dir)
+    if owner_user_id <= 0 or owner_chat_id == 0:
+        raise ValueError("Telegram scene registry requires non-zero owner user/chat ids")
     tokens: list[str] = []
     created_at = datetime.now(timezone.utc).isoformat()
-    for scene in scenes:
-        token = scene_token(scene)
-        record = SceneRegistryRecord(
-            token=token,
-            provider=provider,
-            sensor=sensor.value,
-            scene=scene.model_dump(mode="json"),
-            scenes_json=str(scenes_json),
-            asset_manifest=str(asset_manifest) if asset_manifest else None,
-            created_at=created_at,
-            aoi_geojson=aoi_geojson,
-            search_hours=search_hours,
-        )
-        registry[token] = record.__dict__
-        tokens.append(token)
-    save_registry(output_dir, registry)
+    with _REGISTRY_LOCK:
+        registry = load_registry(output_dir)
+        for scene in scenes:
+            token = scene_token(scene, owner_user_id, owner_chat_id)
+            record = SceneRegistryRecord(
+                token=token,
+                owner_user_id=owner_user_id,
+                owner_chat_id=owner_chat_id,
+                provider=provider,
+                sensor=sensor.value,
+                scene=scene.model_dump(mode="json"),
+                scenes_json=str(scenes_json),
+                asset_manifest=str(asset_manifest) if asset_manifest else None,
+                created_at=created_at,
+                aoi_geojson=aoi_geojson,
+                search_hours=search_hours,
+            )
+            registry[token] = record.__dict__
+            tokens.append(token)
+        save_registry(output_dir, registry)
     return tokens
 
 
-def find_scene(output_dir: Path, token: str) -> tuple[Scene, dict[str, object]] | None:
+def find_scene(
+    output_dir: Path,
+    token: str,
+    *,
+    owner_user_id: int,
+    owner_chat_id: int,
+) -> tuple[Scene, dict[str, object]] | None:
     record = load_registry(output_dir).get(token)
     if not isinstance(record, dict):
+        return None
+    if record.get("owner_user_id") != owner_user_id or record.get("owner_chat_id") != owner_chat_id:
         return None
     scene_payload = record.get("scene")
     if not isinstance(scene_payload, dict):
@@ -334,11 +364,16 @@ def restore_scene_page(
     output_dir: Path,
     token: str,
     page: int,
+    *,
+    owner_user_id: int,
+    owner_chat_id: int,
     page_size: int = SCENE_PAGE_SIZE,
 ) -> ScenePage:
     registry = load_registry(output_dir)
     record = registry.get(token)
     if not isinstance(record, dict):
+        raise FileNotFoundError("token not found in scene registry")
+    if record.get("owner_user_id") != owner_user_id or record.get("owner_chat_id") != owner_chat_id:
         raise FileNotFoundError("token not found in scene registry")
     scenes_json = record.get("scenes_json")
     if not isinstance(scenes_json, str):
@@ -347,7 +382,7 @@ def restore_scene_page(
     if not scenes_path.is_file():
         raise FileNotFoundError(scenes_json)
     scenes = load_scenes(scenes_path)
-    tokens = [scene_token(scene) for scene in scenes]
+    tokens = [scene_token(scene, owner_user_id, owner_chat_id) for scene in scenes]
     sensor_value = str(record.get("sensor") or (scenes[0].sensor.value if scenes else Sensor.AUTO.value))
     provider = str(record.get("provider") or (scenes[0].provider if scenes else "-"))
     hours_raw = record.get("search_hours")
@@ -461,6 +496,8 @@ async def list_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         scenes,
         result.scenes_json,
         result.asset_manifest,
+        owner_user_id=effective_user_id(update),
+        owner_chat_id=effective_chat_id(update),
         aoi_geojson=aoi_geojson,
         search_hours=hours,
     )
@@ -526,6 +563,8 @@ async def bbox_dates_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         scenes,
         result.scenes_json,
         result.asset_manifest,
+        owner_user_id=effective_user_id(update),
+        owner_chat_id=effective_chat_id(update),
         aoi_geojson=aoi_geojson,
         search_hours=hours,
     )
@@ -549,7 +588,12 @@ async def send_scene_preview_by_token(update: Update, token: str, config: Telegr
     if not target:
         return
 
-    found = find_scene(config.output_dir, token)
+    found = find_scene(
+        config.output_dir,
+        token,
+        owner_user_id=effective_user_id(update),
+        owner_chat_id=effective_chat_id(update),
+    )
     if not found:
         await target.reply_text("Снимок не найден в локальном registry. Выполните /dates или /bboxdates заново.")
         return
@@ -619,7 +663,13 @@ async def scene_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except ValueError:
         page = 0
     try:
-        scene_page = restore_scene_page(config.output_dir, token, page)
+        scene_page = restore_scene_page(
+            config.output_dir,
+            token,
+            page,
+            owner_user_id=effective_user_id(update),
+            owner_chat_id=effective_chat_id(update),
+        )
     except Exception:
         if query.message:
             await query.message.reply_text(

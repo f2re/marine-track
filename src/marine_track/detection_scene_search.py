@@ -40,7 +40,15 @@ def search_detection_capable_scenes(
     max_results: int = 20,
 ) -> DetectionSceneSearchResult:
     output.mkdir(parents=True, exist_ok=True)
-    cache_key = search_cache_key(aoi, start, end, sensor, max_results)
+    cache_key = search_cache_key(
+        aoi,
+        start,
+        end,
+        sensor,
+        max_results,
+        purpose="detection",
+        capability="processable_geotiff_cog",
+    )
     cached = read_scene_search_cache(search_cache_path(cache_key))
     if cached is not None:
         provider, concrete_sensor, scenes = cached

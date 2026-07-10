@@ -47,9 +47,17 @@ class MaterializationError(RuntimeError):
 def materialize_scene_from_token(
     token: str,
     output_dir: Path,
+    *,
+    owner_user_id: int,
+    owner_chat_id: int,
     cache_dir: Path | None = None,
 ) -> MaterializedScene:
-    found = find_scene(output_dir, token)
+    found = find_scene(
+        output_dir,
+        token,
+        owner_user_id=owner_user_id,
+        owner_chat_id=owner_chat_id,
+    )
     if found is None:
         raise MaterializationError(f"Scene token not found: {token}")
     scene, record = found

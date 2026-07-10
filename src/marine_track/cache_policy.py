@@ -57,19 +57,36 @@ def aoi_hash_from_geojson(value: dict[str, object] | None) -> str:
     return short_hash(payload)
 
 
+def normalized_utc_iso(value: datetime) -> str:
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return aware.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def search_cache_key(
     aoi_path: Path,
     start: datetime,
     end: datetime,
     sensor: Sensor,
     max_results: int,
+    *,
+    purpose: str,
+    capability: str,
 ) -> str:
-    duration_minutes = max(1, int((end - start).total_seconds() // 60))
+    purpose = purpose.strip()
+    capability = capability.strip()
+    if not purpose or not capability:
+        raise ValueError("purpose and capability must be non-empty")
+    if end <= start:
+        raise ValueError("search end must be after start")
     payload = {
+        "schema_version": 2,
         "aoi_hash": aoi_hash_from_path(aoi_path),
         "sensor": sensor.value,
-        "duration_minutes": duration_minutes,
+        "start_utc": normalized_utc_iso(start),
+        "end_utc": normalized_utc_iso(end),
         "max_results": max_results,
+        "purpose": purpose,
+        "capability": capability,
     }
     return short_hash(json.dumps(payload, sort_keys=True).encode("utf-8"), length=20)
 
