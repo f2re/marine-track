@@ -1,0 +1,65 @@
+name: Finalize transactional Telegram user state
+
+on:
+  push:
+    branches:
+      - agent/transactional-telegram-state-20260710
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/transactional-telegram-state-20260710
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply migration
+        run: python scripts/agent_transactional_telegram_state.py
+      - name: Install and validate
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip 2>&1 | tee telegram-state-install.txt
+          pip install -e .[dev] 2>&1 | tee -a telegram-state-install.txt
+          ruff check --fix src tests runtime_check.py 2>&1 | tee telegram-state-ruff.txt
+          python -m compileall -q src runtime_check.py 2>&1 | tee telegram-state-compile.txt
+          bash -n install_telegram_bot.sh deploy_telegram_bot.sh 2>&1 | tee telegram-state-shell.txt
+          ruff check src tests runtime_check.py 2>&1 | tee -a telegram-state-ruff.txt
+          pytest -q 2>&1 | tee telegram-state-pytest.txt
+      - name: Commit tested implementation
+        run: |
+          rm -f scripts/agent_transactional_telegram_state.py
+          rm -f .github/workflows/agent-transactional-telegram-state.yml
+          rm -f telegram-state-install.txt telegram-state-ruff.txt telegram-state-compile.txt telegram-state-shell.txt telegram-state-pytest.txt
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --cached --quiet; then
+            echo 'No generated changes found.' >&2
+            exit 1
+          fi
+          git commit -m 'Make Telegram user state transactional and crash-safe'
+          git push origin HEAD:agent/transactional-telegram-state-20260710
+      - name: Publish diagnostics
+        if: failure()
+        run: |
+          {
+            echo 'Transactional Telegram state finalization failed.'
+            for file in telegram-state-install.txt telegram-state-ruff.txt telegram-state-compile.txt telegram-state-shell.txt telegram-state-pytest.txt; do
+              if test -f "$file"; then
+                echo
+                echo "### $file"
+                tail -n 300 "$file"
+              fi
+            done
+          } > telegram-state-diagnostics.txt
+          gh pr comment 30 --body-file telegram-state-diagnostics.txt || true
