@@ -9,104 +9,14 @@ on:
     branches:
       - main
 
-permissions:
-  contents: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: agent/effective-config-provenance-20260710
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Apply effective config migration
-        run: |
-          set +e
-          if grep -q 'effective_config = load_effective_detector_config' src/marine_track/detection_pipeline.py; then
-            echo 'Migration already applied.' > migration.txt
-            status=0
-          else
-            python - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/agent_effective_config_provenance.py')
-          text = path.read_text(encoding='utf-8')
-          text = text.replace('    if count != 1:\n', '    if count < 1:\n', 1)
-          text = text.replace('        f"""preprocessing:', "        f'''preprocessing:")
-          text = text.replace('    min_contrast_sigma: 0.0\n""",\n        encoding="utf-8",', "    min_contrast_sigma: 0.0\n''',\n        encoding=\"utf-8\",")
-          path.write_text(text, encoding='utf-8')
-          PY
-            python scripts/agent_effective_config_provenance.py > migration.txt 2>&1
-            status=$?
-          fi
-          if [ "$status" = "0" ]; then
-            python - <<'PY'
-          from pathlib import Path
-          path = Path('src/marine_track/detection_pipeline.py')
-          text = path.read_text(encoding='utf-8')
-          text = text.replace('import json\n', '', 1)
-          text = text.replace(
-              '''    effective_config = load_effective_detector_config(
-                  materialized.scene.sensor,
-                  **detector_kwargs,
-              )
-          ''',
-              '''    effective_config = load_effective_detector_config(
-                  materialized.scene.sensor,
-                  threshold_sigma=threshold_sigma,
-                  min_area_px=min_area_px,
-                  max_area_px=max_area_px,
-                  local_window_px=local_window_px,
-                  guard_window_px=guard_window_px,
-                  min_contrast_sigma=min_contrast_sigma,
-              )
-          ''',
-          )
-          text = text.replace(
-              '''        threshold_sigma=threshold_sigma,
-                  min_area_px=min_area_px,
-                  max_area_px=max_area_px,
-                  local_window_px=local_window_px,
-                  guard_window_px=guard_window_px,
-                  min_contrast_sigma=min_contrast_sigma,
-                  land_mask_geojson=land_mask_geojson,
-          ''',
-              '''        **detector_kwargs,
-                  land_mask_geojson=land_mask_geojson,
-          ''',
-              1,
-          )
-          path.write_text(text, encoding='utf-8')
-          PY
-          fi
-          echo "$status" > migration.exit
-          cat migration.txt
-          if [ "$status" = "0" ]; then
-            python -m pip install 'ruff>=0.5'
-            ruff check --select I --fix src tests runtime_check.py
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add . ':!scripts/agent_effective_config_provenance.py' ':!.github/workflows/ci.yml' ':!migration.txt' ':!migration.exit'
-            if ! git diff --cached --quiet; then
-              git commit -m 'Fix effective detector config wiring'
-              git push origin HEAD:agent/effective-config-provenance-20260710
-            fi
-          fi
-          exit 0
-      - name: Upload migration diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: migration-diagnostics
-          path: |
-            migration.txt
-            migration.exit
-          if-no-files-found: error
-          retention-days: 7
-      - name: Migration gate
-        run: test "$(cat migration.exit)" = "0"
       - name: Install package
         run: |
           python -m pip install --upgrade pip
@@ -139,7 +49,7 @@ jobs:
             ruff.exit
             pytest.txt
             pytest.exit
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
       - name: Gate
         if: always()
