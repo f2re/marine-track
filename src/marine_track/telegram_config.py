@@ -20,6 +20,10 @@ class TelegramBotConfig:
     detection_max_crops: int
     land_mask_geojson: Path | None
     shoreline_buffer_m: int
+    calibration_min_labels: int
+    calibration_min_positive: int
+    calibration_min_negative: int
+    calibration_crop_size_px: int
 
 
 def parse_admin_ids(raw: str | None) -> set[int]:
@@ -62,6 +66,10 @@ def load_telegram_config() -> TelegramBotConfig:
     except ValueError:
         default_sensor = Sensor.AUTO
 
+    calibration_min_labels = env_int("MARINE_TRACK_CALIBRATION_MIN_LABELS", 20, 4, 100000)
+    calibration_min_positive = env_int("MARINE_TRACK_CALIBRATION_MIN_POSITIVE", 5, 1, calibration_min_labels)
+    calibration_min_negative = env_int("MARINE_TRACK_CALIBRATION_MIN_NEGATIVE", 5, 1, calibration_min_labels)
+
     return TelegramBotConfig(
         token=token,
         admin_ids=parse_admin_ids(os.getenv("TELEGRAM_ADMIN_IDS")),
@@ -74,4 +82,8 @@ def load_telegram_config() -> TelegramBotConfig:
         detection_max_crops=env_int("MARINE_TRACK_DETECTION_MAX_CROPS", 10, 0, 100),
         land_mask_geojson=env_optional_path("MARINE_TRACK_LAND_MASK_GEOJSON"),
         shoreline_buffer_m=env_int("MARINE_TRACK_SHORELINE_BUFFER_M", 500, 0, 100_000),
+        calibration_min_labels=calibration_min_labels,
+        calibration_min_positive=calibration_min_positive,
+        calibration_min_negative=calibration_min_negative,
+        calibration_crop_size_px=env_int("MARINE_TRACK_CALIBRATION_CROP_SIZE_PX", 768, 384, 1200),
     )
