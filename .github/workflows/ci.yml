@@ -9,62 +9,14 @@ on:
     branches:
       - main
 
-permissions:
-  contents: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: agent/security-cache-hardening-20260710
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Apply security migration
-        run: |
-          set +e
-          if grep -q 'allow_public_access' src/marine_track/telegram_config.py; then
-            echo 'Migration already applied.' > migration.txt
-            status=0
-          else
-            python - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/agent_security_hardening.py')
-          text = path.read_text(encoding='utf-8')
-          text = text.replace('    if count != 1:\n', '    if count < 1:\n', 1)
-          path.write_text(text, encoding='utf-8')
-          PY
-            python scripts/agent_security_hardening.py > migration.txt 2>&1
-            status=$?
-          fi
-          echo "$status" > migration.exit
-          cat migration.txt
-          if [ "$status" = "0" ]; then
-            python -m pip install 'ruff>=0.5'
-            ruff check --select I --fix src tests runtime_check.py
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add . ':!scripts/agent_security_hardening.py' ':!.github/workflows/agent-security-hardening.yml' ':!.github/workflows/ci.yml' ':!migration.txt' ':!migration.exit'
-            if ! git diff --cached --quiet; then
-              git commit -m 'Harden Telegram access, scene tokens and search cache'
-              git push origin HEAD:agent/security-cache-hardening-20260710
-            fi
-          fi
-          exit 0
-      - name: Upload migration diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: migration-diagnostics
-          path: |
-            migration.txt
-            migration.exit
-          if-no-files-found: error
-          retention-days: 7
-      - name: Migration gate
-        run: test "$(cat migration.exit)" = "0"
       - name: Install package
         run: |
           python -m pip install --upgrade pip
@@ -97,7 +49,7 @@ jobs:
             ruff.exit
             pytest.txt
             pytest.exit
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
       - name: Gate
         if: always()
