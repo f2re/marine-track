@@ -6,9 +6,10 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage as ndi
 
-# Numerical floor only. It prevents a perfectly uniform background from producing
-# contrast_sigma=0 or non-finite JSON; it is not a substitute for sensor noise calibration.
+# Numerical guards only. They prevent a uniform background from producing zero
+# or non-finite contrast. These constants are not sensor-noise calibration.
 CONTRAST_STD_FLOOR = 1e-6
+MAX_CONTRAST_SIGMA = 100.0
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,8 @@ def adaptive_threshold_candidates(
             local_window_px,
         )
         contrast_delta = max(0.0, peak_score - background_mean)
-        contrast_sigma = float(contrast_delta / max(background_std, CONTRAST_STD_FLOOR))
+        raw_contrast = contrast_delta / max(background_std, CONTRAST_STD_FLOOR)
+        contrast_sigma = float(min(MAX_CONTRAST_SIGMA, raw_contrast))
         if contrast_sigma < float(min_contrast_sigma):
             continue
         major_axis, minor_axis, orientation, elongation = component_shape_metrics(component)
