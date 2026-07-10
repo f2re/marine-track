@@ -15,6 +15,9 @@ from marine_track.telegram_scene_browser import (
     scene_page_slice,
 )
 
+OWNER_USER_ID = 100
+OWNER_CHAT_ID = 200
+
 
 def make_scene(index: int) -> Scene:
     return Scene(
@@ -72,6 +75,8 @@ def test_scene_callbacks_are_short(tmp_path):
         scenes,
         scenes_json,
         None,
+        owner_user_id=OWNER_USER_ID,
+        owner_chat_id=OWNER_CHAT_ID,
         search_hours=12,
     )
 
@@ -93,10 +98,19 @@ def test_restore_scene_page_from_registry_without_provider_search(tmp_path):
         scenes,
         scenes_json,
         None,
+        owner_user_id=OWNER_USER_ID,
+        owner_chat_id=OWNER_CHAT_ID,
         search_hours=24,
     )
 
-    restored = restore_scene_page(tmp_path, tokens[0], page=1, page_size=6)
+    restored = restore_scene_page(
+        tmp_path,
+        tokens[0],
+        page=1,
+        owner_user_id=OWNER_USER_ID,
+        owner_chat_id=OWNER_CHAT_ID,
+        page_size=6,
+    )
 
     assert restored.provider == "test-provider"
     assert restored.sensor == Sensor.SENTINEL1
@@ -110,8 +124,23 @@ def test_restore_scene_page_from_registry_without_provider_search(tmp_path):
 def test_restore_scene_page_reports_stale_registry(tmp_path):
     scenes = [make_scene(0)]
     scenes_json = write_scenes(tmp_path, scenes)
-    tokens = register_scenes(tmp_path, "test-provider", Sensor.SENTINEL1, scenes, scenes_json, None)
+    tokens = register_scenes(
+        tmp_path,
+        "test-provider",
+        Sensor.SENTINEL1,
+        scenes,
+        scenes_json,
+        None,
+        owner_user_id=OWNER_USER_ID,
+        owner_chat_id=OWNER_CHAT_ID,
+    )
     scenes_json.unlink()
 
     with pytest.raises(FileNotFoundError):
-        restore_scene_page(tmp_path, tokens[0], page=0)
+        restore_scene_page(
+            tmp_path,
+            tokens[0],
+            page=0,
+            owner_user_id=OWNER_USER_ID,
+            owner_chat_id=OWNER_CHAT_ID,
+        )
