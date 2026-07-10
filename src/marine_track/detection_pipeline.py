@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import os
 from collections.abc import Callable
@@ -100,7 +99,12 @@ def run_detection_for_token(
     )
     effective_config = load_effective_detector_config(
         materialized.scene.sensor,
-        **detector_kwargs,
+        threshold_sigma=threshold_sigma,
+        min_area_px=min_area_px,
+        max_area_px=max_area_px,
+        local_window_px=local_window_px,
+        guard_window_px=guard_window_px,
+        min_contrast_sigma=min_contrast_sigma,
     )
     detector_kwargs = effective_config.detector_kwargs()
 
@@ -111,12 +115,7 @@ def run_detection_for_token(
         provider=materialized.provider,
         product_id=materialized.scene.product_id,
         acquisition_time=materialized.scene.acquisition_time,
-        threshold_sigma=threshold_sigma,
-        min_area_px=min_area_px,
-        max_area_px=max_area_px,
-        local_window_px=local_window_px,
-        guard_window_px=guard_window_px,
-        min_contrast_sigma=min_contrast_sigma,
+        **detector_kwargs,
         land_mask_geojson=land_mask_geojson,
         shoreline_buffer_m=shoreline_buffer_m,
     )
