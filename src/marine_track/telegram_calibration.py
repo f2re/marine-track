@@ -21,6 +21,10 @@ from marine_track.calibration import (
     rebuild_calibration_profile,
     submit_calibration_answer,
 )
+from marine_track.telegram_calibration_phase2 import (
+    ACTION_OPEN as PHASE2_ACTION_OPEN,
+    phase2_callback,
+)
 from marine_track.telegram_config import TelegramBotConfig
 from marine_track.telegram_ui import ACTION_MENU, MENU_CALLBACK_PREFIX
 
@@ -60,7 +64,7 @@ def calibration_warning_text(profile: dict[str, Any]) -> str:
         f"Размечено: <code>{int(labels.get('usable', 0))}/{int(targets.get('min_labels', 0))}</code>\n"
         f"Судно: <code>{int(labels.get('positive', 0))}/{int(targets.get('min_positive', 0))}</code> · "
         f"ложный кандидат: <code>{int(labels.get('negative', 0))}/{int(targets.get('min_negative', 0))}</code>\n\n"
-        "Откройте калибровку и укажите клетку, в которой находится центр судна."
+        "Начните с candidate-разметки, затем используйте независимые tiles phase 2."
     )
 
 
@@ -103,21 +107,46 @@ def calibration_menu_text(profile: dict[str, Any]) -> str:
         f"Неуверенные: <code>{int(labels.get('uncertain', 0))}</code> · "
         f"пропущенные: <code>{int(labels.get('skipped', 0))}</code>"
         f"{coefficient_lines}{metric_line}\n\n"
-        "Разметка изменяет коэффициенты ranking score только после достижения минимального объёма. "
-        "CFAR и формула скорости автоматически не меняются."
+        "Candidate-разметка калибрует ranking score. Phase 2 независимо оценивает false alarms "
+        "и пропущенные цели; CFAR и формула скорости автоматически не меняются."
     )
 
 
 def calibration_menu_markup(profile: dict[str, Any]) -> InlineKeyboardMarkup:
-    action_label = "▶️ Начать разметку" if profile.get("status") == "not_started" else "▶️ Продолжить"
+    action_label = (
+        "▶️ Начать candidate-разметку"
+        if profile.get("status") == "not_started"
+        else "▶️ Продолжить candidate"
+    )
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton(action_label, callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{ACTION_NEXT}")],
             [
-                InlineKeyboardButton("📊 Статус", callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{ACTION_STATUS}"),
-                InlineKeyboardButton("♻️ Пересчитать", callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{ACTION_REBUILD}"),
+                InlineKeyboardButton(
+                    action_label,
+                    callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{ACTION_NEXT}",
+                )
             ],
-            [InlineKeyboardButton("🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}")],
+            [
+                InlineKeyboardButton(
+                    "🌊 Независимые tiles · phase 2",
+                    callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{PHASE2_ACTION_OPEN}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📊 Статус",
+                    callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{ACTION_STATUS}",
+                ),
+                InlineKeyboardButton(
+                    "♻️ Пересчитать",
+                    callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{ACTION_REBUILD}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🏠 Меню", callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_MENU}"
+                )
+            ],
         ]
     )
 
@@ -133,12 +162,21 @@ def calibration_task_markup(task_id: str) -> InlineKeyboardMarkup:
     rows.extend(
         [
             [
-                InlineKeyboardButton("🚫 Судна нет", callback_data=_answer_callback(task_id, ANSWER_NONE)),
-                InlineKeyboardButton("❔ Не уверен", callback_data=_answer_callback(task_id, ANSWER_UNCERTAIN)),
+                InlineKeyboardButton(
+                    "🚫 Судна нет", callback_data=_answer_callback(task_id, ANSWER_NONE)
+                ),
+                InlineKeyboardButton(
+                    "❔ Не уверен", callback_data=_answer_callback(task_id, ANSWER_UNCERTAIN)
+                ),
             ],
             [
-                InlineKeyboardButton("⏭ Пропустить", callback_data=_answer_callback(task_id, ANSWER_SKIP)),
-                InlineKeyboardButton("📊 Статус", callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{ACTION_STATUS}"),
+                InlineKeyboardButton(
+                    "⏭ Пропустить", callback_data=_answer_callback(task_id, ANSWER_SKIP)
+                ),
+                InlineKeyboardButton(
+                    "📊 Статус",
+                    callback_data=f"{CALIBRATION_CALLBACK_PREFIX}:{ACTION_STATUS}",
+                ),
             ],
         ]
     )
@@ -189,17 +227,21 @@ async def calibration_callback(
     context: ContextTypes.DEFAULT_TYPE,
     config: TelegramBotConfig,
 ) -> None:
-    del context
     query = update.callback_query
     if not query or not query.data:
-        return
-    await query.answer()
-    if not await require_calibration_admin(update, config):
         return
     parts = query.data.split(":")
     if len(parts) < 2 or parts[0] != CALIBRATION_CALLBACK_PREFIX:
         return
     action = parts[1]
+    if action.startswith("p2"):
+        await phase2_callback(update, context, config)
+        return
+
+    del context
+    await query.answer()
+    if not await require_calibration_admin(update, config):
+        return
     if action in {ACTION_OPEN, ACTION_STATUS}:
         await show_calibration_menu(update, config)
         return
@@ -234,12 +276,9 @@ async def calibration_callback(
             return
         try:
             await query.edit_message_reply_markup(reply_markup=None)
-        except Exception as exc:  # pragma: no cover - Telegram message state dependent
+        except Exception as exc:  # pragma: no cover
             LOGGER.debug("Unable to clear calibration keyboard for task %s: %s", task_id, exc)
-        await query.message.reply_text(
-            answer_feedback(result),
-            parse_mode=ParseMode.HTML,
-        )
+        await query.message.reply_text(answer_feedback(result), parse_mode=ParseMode.HTML)
         await send_next_calibration_task(update, config)
 
 
@@ -256,7 +295,7 @@ async def send_next_calibration_task(update: Update, config: TelegramBotConfig) 
     if task is None:
         profile = load_calibration_profile(config.output_dir, calibration_targets(config))
         await target.reply_text(
-            "Нет новых кандидатов для разметки. Сначала выполните детекцию по одной или нескольким сценам.\n\n"
+            "Нет новых candidates. Выполните детекцию новых сцен или перейдите к независимым tiles phase 2.\n\n"
             + calibration_menu_text(profile),
             parse_mode=ParseMode.HTML,
             reply_markup=calibration_menu_markup(profile),
@@ -268,7 +307,7 @@ async def send_next_calibration_task(update: Update, config: TelegramBotConfig) 
     caption = (
         "🧪 <b>Калибровка кандидата</b>\n"
         "Выберите клетку, в которой находится <b>центр корпуса судна</b>. "
-        "Не ориентируйтесь только на длинный след: нужен компактный объект-корпус.\n\n"
+        "Не ориентируйтесь только на длинный след.\n\n"
         f"sensor: <code>{html.escape(str(source.get('sensor') or 'unknown'))}</code> · "
         f"provider: <code>{html.escape(str(source.get('provider') or 'unknown'))}</code>\n"
         f"time: <code>{html.escape(str(source.get('acquisition_time') or 'unknown'))}</code>\n\n"
