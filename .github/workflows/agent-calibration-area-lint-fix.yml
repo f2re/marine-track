@@ -1,0 +1,63 @@
+name: Repair calibration area workflow
+
+on:
+  push:
+    branches:
+      - agent/calibration-area-search-20260710
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/calibration-area-search-20260710
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply focused repairs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          module = Path('src/marine_track/telegram_calibration_areas.py')
+          text = module.read_text(encoding='utf-8')
+          text = text.replace('from pathlib import Path\n', '', 1)
+          module.write_text(text, encoding='utf-8')
+
+          test = Path('tests/test_calibration_area_workflow.py')
+          text = test.read_text(encoding='utf-8')
+          old = '''    assert f"mtcal:{ACTION_AREA_HOME}" in [
+              button.callback_data
+              for row in area_home_markup(config, 100).inline_keyboard
+              for button in row
+          ]'''.replace('          ', '')
+          new = '''    callbacks = [
+              button.callback_data
+              for row in area_home_markup(config, 100).inline_keyboard
+              for button in row
+          ]
+          assert "mtcal:aall:0" in callbacks'''.replace('          ', '')
+          if old not in text:
+              raise SystemExit('test assertion marker not found')
+          test.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Validate
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+          python -m compileall -q src runtime_check.py
+          ruff check src tests runtime_check.py
+          pytest -q
+      - name: Commit repair
+        run: |
+          rm -f .github/workflows/agent-calibration-area-lint-fix.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Fix calibration area workflow validation'
+          git push origin HEAD:agent/calibration-area-search-20260710
