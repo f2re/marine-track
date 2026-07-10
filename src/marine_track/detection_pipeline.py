@@ -336,13 +336,15 @@ def ais_track_points(
     for _, row in frame.sort_values("time").iterrows():
         sog = row.get("sog_knots")
         cog = row.get("cog_deg")
+        sog_value = float(sog) if isinstance(sog, (int, float)) and math.isfinite(float(sog)) else None
+        cog_value = float(cog) % 360.0 if isinstance(cog, (int, float)) and math.isfinite(float(cog)) else None
         points.append(
             {
                 "time": row["time"].isoformat(),
                 "lon": float(row["lon"]),
                 "lat": float(row["lat"]),
-                "sog_knots": None if sog != sog else float(sog),
-                "cog_deg": None if cog != cog else float(cog),
+                "sog_knots": sog_value,
+                "cog_deg": cog_value,
             }
         )
     return points
