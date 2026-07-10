@@ -20,6 +20,7 @@ from marine_track.data_sources import (
     default_stac_providers,
 )
 from marine_track.models import Scene, Sensor
+from marine_track.resource_limits import validate_aoi_path
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ def search_scenes_with_fallback(
     sensor: Sensor,
     max_results: int = 50,
 ) -> tuple[str, Sensor, list[Scene]]:
+    validate_aoi_path(aoi)
     manager = build_source_manager()
     errors: list[str] = []
 
@@ -94,6 +96,7 @@ def run_search_stage(
     max_results: int = 50,
     write_manifest: bool = True,
 ) -> SearchStageResult:
+    validate_aoi_path(aoi)
     output.mkdir(parents=True, exist_ok=True)
     cache_key = search_cache_key(
         aoi,
@@ -108,7 +111,9 @@ def run_search_stage(
     if cached is not None:
         provider, concrete_sensor, scenes = cached
         scenes_json = write_scenes_json(scenes, output / "scenes.json")
-        asset_manifest = write_asset_manifest(scenes, output / "assets.csv") if write_manifest else None
+        asset_manifest = (
+            write_asset_manifest(scenes, output / "assets.csv") if write_manifest else None
+        )
         return SearchStageResult(
             provider=provider,
             sensor=concrete_sensor,
@@ -128,7 +133,9 @@ def run_search_stage(
         max_results=max_results,
     )
     scenes_json = write_scenes_json(scenes, output / "scenes.json")
-    asset_manifest = write_asset_manifest(scenes, output / "assets.csv") if write_manifest else None
+    asset_manifest = (
+        write_asset_manifest(scenes, output / "assets.csv") if write_manifest else None
+    )
     write_scene_search_cache(search_cache_path(cache_key), provider, concrete_sensor, scenes)
     return SearchStageResult(
         provider=provider,
