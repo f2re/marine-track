@@ -38,3 +38,5 @@ AOIs are interpreted as WGS84 polygonal GeoJSON. Out-of-range coordinates, inval
 excessive vertices and excessive geodesic area are rejected before provider search. Raster
 pixel/tile limits are checked immediately after opening the materialized crop and before tiled
 detection. These limits are operational safety controls, not scientific tuning parameters.
+Regression coverage checks the training-ring arithmetic, tile-boundary ownership, bounded overview
+reads, malformed configuration, pre-provider rejection and every built-in calibration sector.
