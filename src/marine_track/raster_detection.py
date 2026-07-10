@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import math
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from marine_track.calibration import score_candidate
+from marine_track.calibration import load_calibration_profile, score_candidate
 from marine_track.detection import adaptive_threshold_candidates
 from marine_track.geospatial import RasterGeoContext, pixel_scale_m, pixel_to_lonlat
 from marine_track.land_mask import apply_land_mask
@@ -34,6 +35,11 @@ def detect_candidates_from_raster(
         import rasterio
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise RuntimeError("rasterio is required for raster detection") from exc
+
+    if calibration_profile is None:
+        calibration_profile = load_calibration_profile(
+            os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram")
+        )
 
     with rasterio.open(path) as dataset:
         image = dataset.read(1).astype("float32")
