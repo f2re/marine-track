@@ -1,75 +1,60 @@
-name: Finalize atomic release implementation
+name: CI
 
 on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
   pull_request:
     branches:
       - main
 
-permissions:
-  contents: write
-  pull-requests: write
-
-env:
-  GH_TOKEN: ${{ github.token }}
-
 jobs:
-  finalize:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: agent/atomic-release-health-20260710
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Apply and validate
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Compile
+        run: python -m compileall -q src runtime_check.py
+      - name: Shell syntax
+        run: bash -n install_telegram_bot.sh deploy_telegram_bot.sh
+      - name: Lint
         run: |
           set +e
-          status=0
-          git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
-          python scripts/agent_atomic_release_health.py > atomic-migration.txt 2>&1 || status=$?
-          if test "$status" = 0; then python -m pip install --upgrade pip > atomic-install.txt 2>&1 || status=$?; fi
-          if test "$status" = 0; then pip install -e .[dev] >> atomic-install.txt 2>&1 || status=$?; fi
-          if test "$status" = 0; then ruff check --fix src tests runtime_check.py > atomic-ruff.txt 2>&1 || status=$?; fi
-          if test "$status" = 0; then python -m compileall -q src runtime_check.py > atomic-compile.txt 2>&1 || status=$?; fi
-          if test "$status" = 0; then bash -n install_telegram_bot.sh deploy_telegram_bot.sh > atomic-shell.txt 2>&1 || status=$?; fi
-          if test "$status" = 0; then ruff check src tests runtime_check.py >> atomic-ruff.txt 2>&1 || status=$?; fi
-          if test "$status" = 0; then pytest -q > atomic-pytest.txt 2>&1 || status=$?; fi
-          echo "$status" > atomic.exit
-          for file in atomic-migration.txt atomic-install.txt atomic-compile.txt atomic-shell.txt atomic-ruff.txt atomic-pytest.txt; do
-            test -f "$file" && cat "$file" || true
-          done
+          ruff check src tests runtime_check.py > ruff.txt 2>&1
+          status=$?
+          echo "$status" > ruff.exit
+          cat ruff.txt
           exit 0
-      - name: Publish failure diagnostics
+      - name: Test
+        run: |
+          set +e
+          pytest -q > pytest.txt 2>&1
+          status=$?
+          echo "$status" > pytest.exit
+          cat pytest.txt
+          exit 0
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics
+          path: |
+            ruff.txt
+            ruff.exit
+            pytest.txt
+            pytest.exit
+          if-no-files-found: error
+          retention-days: 7
+      - name: Gate
         if: always()
         run: |
-          if test "$(cat atomic.exit)" != 0; then
-            {
-              echo 'Atomic release finalization failed.'
-              for file in atomic-migration.txt atomic-install.txt atomic-compile.txt atomic-shell.txt atomic-ruff.txt atomic-pytest.txt; do
-                if test -f "$file"; then
-                  echo
-                  echo "### $file"
-                  tail -n 400 "$file"
-                fi
-              done
-            } > atomic-diagnostics.txt
-            gh pr comment 14 --body-file atomic-diagnostics.txt || true
-          fi
-      - name: Gate
-        run: test "$(cat atomic.exit)" = 0
-      - name: Commit tested implementation
-        run: |
-          git checkout HEAD -- .github/workflows/ci.yml
-          rm -f scripts/agent_atomic_release_health.py
-          rm -f atomic.exit atomic-migration.txt atomic-install.txt atomic-compile.txt atomic-shell.txt atomic-ruff.txt atomic-pytest.txt atomic-diagnostics.txt
-          git add -A
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --cached --quiet; then
-            echo 'No generated implementation changes found.' >&2
-            exit 1
-          fi
-          git commit -m 'Add atomic release deployment and runtime health gate'
-          git push origin HEAD:agent/atomic-release-health-20260710
+          test "$(cat ruff.exit)" = "0"
+          test "$(cat pytest.exit)" = "0"
