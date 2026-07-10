@@ -24,32 +24,33 @@ jobs:
           from pathlib import Path
           path = Path('src/marine_track/detection_pipeline.py')
           text = path.read_text(encoding='utf-8')
-          old = '''        sog = row.get("sog_knots")
+          anchor = '''        sog = row.get("sog_knots")
                   cog = row.get("cog_deg")
                   points.append(
-                      {
-                          "time": row["time"].isoformat(),
-                          "lon": float(row["lon"]),
-                          "lat": float(row["lat"]),
-                          "sog_knots": None if sog != sog else float(sog),
-                          "cog_deg": None if cog != cog else float(cog),
-                      }
-                  )'''.replace('                  ', '')
-          new = '''        sog = row.get("sog_knots")
+          '''.replace('                  ', '        ')
+          replacement = '''        sog = row.get("sog_knots")
                   cog = row.get("cog_deg")
-                  sog_value = float(sog) if isinstance(sog, (int, float)) and math.isfinite(float(sog)) else None
-                  cog_value = float(cog) % 360.0 if isinstance(cog, (int, float)) and math.isfinite(float(cog)) else None
+                  sog_value = (
+                      float(sog)
+                      if isinstance(sog, (int, float)) and math.isfinite(float(sog))
+                      else None
+                  )
+                  cog_value = (
+                      float(cog) % 360.0
+                      if isinstance(cog, (int, float)) and math.isfinite(float(cog))
+                      else None
+                  )
                   points.append(
-                      {
-                          "time": row["time"].isoformat(),
-                          "lon": float(row["lon"]),
-                          "lat": float(row["lat"]),
-                          "sog_knots": sog_value,
-                          "cog_deg": cog_value,
-                      }
-                  )'''.replace('                  ', '')
-          if old in text:
-              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          '''.replace('                  ', '        ')
+          text = text.replace(anchor, replacement, 1)
+          text = text.replace(
+              '                "sog_knots": None if sog != sog else float(sog),\n'
+              '                "cog_deg": None if cog != cog else float(cog),\n',
+              '                "sog_knots": sog_value,\n'
+              '                "cog_deg": cog_value,\n',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
           PY
       - name: Format and commit
         run: |
