@@ -61,6 +61,7 @@ jobs:
         run: test "$(cat atomic.exit)" = 0
       - name: Commit tested implementation
         run: |
+          git checkout HEAD -- .github/workflows/ci.yml
           rm -f scripts/agent_atomic_release_health.py
           rm -f atomic.exit atomic-migration.txt atomic-install.txt atomic-compile.txt atomic-shell.txt atomic-ruff.txt atomic-pytest.txt atomic-diagnostics.txt
           git add -A
