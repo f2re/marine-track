@@ -31,6 +31,69 @@ class HeadingMethod(str, Enum):
     AIS_COG = "ais_course_over_ground"
 
 
+class SceneAsset(BaseModel):
+    """Typed STAC/provider asset contract.
+
+    Authentication material is never stored here. ``auth_mode`` only describes
+    how the materializer must obtain transient request headers or a signed URL.
+    """
+
+    href: str
+    media_type: str | None = None
+    roles: list[str] = Field(default_factory=list)
+    title: str | None = None
+    band: str | None = None
+    polarization: str | None = None
+    units: str | None = None
+    nodata: float | int | None = None
+    scale: float | None = None
+    offset: float | None = None
+    auth_mode: Literal["public", "bearer", "runtime_signing", "unknown"] = "unknown"
+    storage: Literal["https", "http", "s3", "azure", "gs", "local", "unknown"] = "unknown"
+    alternate_hrefs: dict[str, str] = Field(default_factory=dict)
+    sidecars: dict[str, str] = Field(default_factory=dict)
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_legacy(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return {"href": value}
+        return value
+
+    @model_validator(mode="after")
+    def infer_storage(self) -> SceneAsset:
+        if self.storage != "unknown":
+            return self
+        lowered = self.href.lower()
+        if lowered.startswith("https://"):
+            self.storage = "https"
+        elif lowered.startswith("http://"):
+            self.storage = "http"
+        elif lowered.startswith("s3://"):
+            self.storage = "s3"
+        elif lowered.startswith(("az://", "azure://")):
+            self.storage = "azure"
+        elif lowered.startswith("gs://"):
+            self.storage = "gs"
+        elif "://" not in lowered:
+            self.storage = "local"
+        return self
+
+    def all_hrefs(self) -> list[tuple[str, str]]:
+        output = [("primary", self.href)]
+        output.extend((str(key), str(value)) for key, value in self.alternate_hrefs.items() if value)
+        return output
+
+    def preferred_href(self, *, prefer_https: bool = False) -> str:
+        candidates = self.all_hrefs()
+        if prefer_https:
+            for _name, href in candidates:
+                if href.lower().startswith("https://"):
+                    return href
+        return self.href
+
+
 class OperationalSpeed(BaseModel):
     """Own-system operational estimate.
 
@@ -112,11 +175,56 @@ class Scene(BaseModel):
     acquisition_time: datetime
     footprint_wkt: str | None = None
     download_url: str | None = None
+    # Legacy flat mapping remains available for Telegram/UI and old manifests.
     assets: dict[str, str] = Field(default_factory=dict)
+    # Canonical provider/materializer contract.
+    asset_records: dict[str, SceneAsset] = Field(default_factory=dict)
     cloud_cover: float | None = None
     polarizations: list[str] | None = None
     beam_mode: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_assets(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        legacy = data.get("assets") or {}
+        records = data.get("asset_records") or {}
+        normalized_records: dict[str, Any] = {}
+        normalized_hrefs: dict[str, str] = {}
+
+        if isinstance(legacy, dict):
+            for key, raw in legacy.items():
+                if isinstance(raw, str):
+                    normalized_hrefs[str(key)] = raw
+                    normalized_records[str(key)] = {"href": raw}
+                elif isinstance(raw, SceneAsset):
+                    normalized_hrefs[str(key)] = raw.href
+                    normalized_records[str(key)] = raw
+                elif isinstance(raw, dict) and isinstance(raw.get("href"), str):
+                    normalized_hrefs[str(key)] = str(raw["href"])
+                    normalized_records[str(key)] = raw
+
+        if isinstance(records, dict):
+            for key, raw in records.items():
+                record = raw if isinstance(raw, SceneAsset) else SceneAsset.model_validate(raw)
+                normalized_records[str(key)] = record
+                normalized_hrefs[str(key)] = record.href
+
+        data["assets"] = normalized_hrefs
+        data["asset_records"] = normalized_records
+        if not data.get("download_url") and normalized_hrefs:
+            data["download_url"] = next(iter(normalized_hrefs.values()))
+        return data
+
+    def asset_record(self, key: str) -> SceneAsset | None:
+        record = self.asset_records.get(key)
+        if record is not None:
+            return record
+        href = self.assets.get(key)
+        return SceneAsset(href=href) if href else None
 
     def polarization_label(self) -> str:
         if self.polarizations:

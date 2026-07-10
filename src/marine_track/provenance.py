@@ -126,8 +126,17 @@ def infer_asset_domain(materialized: Any) -> dict[str, Any]:
     metadata = scene.metadata if isinstance(scene.metadata, dict) else {}
     raster_key = str(materialized.raster_key)
     suffix = Path(str(materialized.raster_href).split("?", 1)[0]).suffix.lower()
-    media_type = "image/tiff; application=geotiff" if suffix in {".tif", ".tiff"} else None
-    units = _first_present(metadata, "units", "unit", "radiometric_units", "measurement_units")
+    asset = getattr(materialized, "raster_asset", None) or scene.asset_record(raster_key)
+    media_type = (
+        asset.media_type
+        if asset is not None and asset.media_type
+        else "image/tiff; application=geotiff" if suffix in {".tif", ".tiff"} else None
+    )
+    units = (
+        asset.units
+        if asset is not None and asset.units
+        else _first_present(metadata, "units", "unit", "radiometric_units", "measurement_units")
+    )
     collection = _first_present(metadata, "collection", "collection_id", "stac_collection")
     processing_level = _first_present(metadata, "processing_level", "product_type", "level")
     return {
@@ -135,11 +144,26 @@ def infer_asset_domain(materialized: Any) -> dict[str, Any]:
         "processing_level": processing_level,
         "asset_key": raster_key,
         "media_type": media_type,
+        "roles": list(asset.roles) if asset is not None else [],
+        "band": asset.band if asset is not None else None,
+        "polarization": asset.polarization if asset is not None else None,
         "units": units,
+        "nodata": asset.nodata if asset is not None else None,
+        "scale": asset.scale if asset is not None else None,
+        "offset": asset.offset if asset is not None else None,
+        "storage": asset.storage if asset is not None else "unknown",
         "polarizations": list(scene.polarizations or []),
-        "band_or_polarization": raster_key,
+        "band_or_polarization": (
+            asset.band or asset.polarization if asset is not None else raster_key
+        ),
         "href": sanitize_url(str(materialized.raster_href)),
-        "auth_mode": _auth_mode(materialized.provider, str(materialized.raster_href)),
+        "alternate_hrefs": {
+            key: sanitize_url(value) for key, value in (asset.alternate_hrefs if asset else {}).items()
+        },
+        "sidecar_keys": sorted((asset.sidecars if asset else {}).keys()),
+        "auth_mode": asset.auth_mode if asset is not None else _auth_mode(
+            materialized.provider, str(materialized.raster_href)
+        ),
     }
 
 

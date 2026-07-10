@@ -5,7 +5,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from marine_track.models import Scene
@@ -17,6 +17,14 @@ ASSET_MANIFEST_FIELDS = [
     "acquisition_time",
     "asset_key",
     "href",
+    "media_type",
+    "roles",
+    "band",
+    "polarization",
+    "units",
+    "auth_mode",
+    "storage",
+    "alternate_hrefs",
     "local_path",
 ]
 
@@ -29,6 +37,14 @@ class AssetRecord:
     acquisition_time: str
     asset_key: str
     href: str
+    media_type: str | None = None
+    roles: str = ""
+    band: str | None = None
+    polarization: str | None = None
+    units: str | None = None
+    auth_mode: str = "unknown"
+    storage: str = "unknown"
+    alternate_hrefs: str = "{}"
     local_path: str | None = None
 
 
@@ -50,8 +66,12 @@ def extension_from_href(href: str, default: str = ".bin") -> str:
 def iter_asset_records(scenes: list[Scene]) -> list[AssetRecord]:
     records: list[AssetRecord] = []
     for scene in scenes:
-        hrefs = scene.assets or ({"product": scene.download_url} if scene.download_url else {})
-        for key, href in hrefs.items():
+        keys = list(scene.assets)
+        if not keys and scene.download_url:
+            keys = ["product"]
+        for key in keys:
+            asset = scene.asset_record(key)
+            href = asset.href if asset is not None else scene.download_url
             if not href:
                 continue
             records.append(
@@ -62,29 +82,44 @@ def iter_asset_records(scenes: list[Scene]) -> list[AssetRecord]:
                     acquisition_time=scene.acquisition_time.isoformat(),
                     asset_key=key,
                     href=href,
+                    media_type=asset.media_type if asset else None,
+                    roles=",".join(asset.roles) if asset else "",
+                    band=asset.band if asset else None,
+                    polarization=asset.polarization if asset else None,
+                    units=asset.units if asset else None,
+                    auth_mode=asset.auth_mode if asset else "unknown",
+                    storage=asset.storage if asset else "unknown",
+                    alternate_hrefs=json.dumps(
+                        {name: sanitize_url(value) for name, value in (asset.alternate_hrefs if asset else {}).items()},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
                 )
             )
     return records
 
 
 def write_asset_manifest(scenes: list[Scene], path: str | Path) -> Path:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    records = iter_asset_records(scenes)
-    with p.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=ASSET_MANIFEST_FIELDS)
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", newline="", encoding="utf-8") as file_obj:
+        writer = csv.DictWriter(file_obj, fieldnames=ASSET_MANIFEST_FIELDS)
         writer.writeheader()
-        for record in records:
-            writer.writerow(record.__dict__)
-    return p
+        for record in iter_asset_records(scenes):
+            row = dict(record.__dict__)
+            row["href"] = sanitize_url(str(row["href"]))
+            writer.writerow(row)
+    return output
 
 
 def write_scenes_json(scenes: list[Scene], path: str | Path) -> Path:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
     payload = [scene.model_dump(mode="json") for scene in scenes]
-    p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return p
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(output)
+    return output
 
 
 def planned_asset_path(record: AssetRecord, cache_dir: str | Path) -> Path:
@@ -93,21 +128,24 @@ def planned_asset_path(record: AssetRecord, cache_dir: str | Path) -> Path:
 
 
 def download_asset(record: AssetRecord, cache_dir: str | Path, overwrite: bool = False) -> Path:
-    """Download a public asset URL into the local cache.
-
-    Authentication-specific providers should wrap/sign URLs before calling this function.
-    The MVP keeps this routine deliberately small and auditable.
-    """
     target = planned_asset_path(record, cache_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() and not overwrite:
         return target
-
     request = Request(record.href, headers={"User-Agent": "marine-track-mvp/0.1"})
-    with urlopen(request, timeout=120) as response, target.open("wb") as f:  # noqa: S310
+    with urlopen(request, timeout=120) as response, target.open("wb") as file_obj:  # noqa: S310
         while True:
             chunk = response.read(1024 * 1024)
             if not chunk:
                 break
-            f.write(chunk)
+            file_obj.write(chunk)
     return target
+
+
+def sanitize_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https", "s3", "az", "azure", "gs"}:
+        return value
+    hostname = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    return urlunsplit((parsed.scheme, hostname + port, parsed.path, "", ""))
