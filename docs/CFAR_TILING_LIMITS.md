@@ -29,6 +29,11 @@ MARINE_TRACK_CFAR_MIN_TRAINING_FRACTION=0.5
 MARINE_TRACK_NORMALIZATION_SAMPLE_PIXELS=1000000
 ```
 
+The baseline values come from `resource_limits` and sensor preprocessing sections in
+`config/processing.yaml`. Non-empty environment variables override the YAML values. The same
+resolution contract is used by pre-provider AOI validation, tiled detector execution and the
+effective configuration recorded in `report.json`; malformed present configuration fails closed.
+
 AOIs are interpreted as WGS84 polygonal GeoJSON. Out-of-range coordinates, invalid topology,
 excessive vertices and excessive geodesic area are rejected before provider search. Raster
 pixel/tile limits are checked immediately after opening the materialized crop and before tiled
