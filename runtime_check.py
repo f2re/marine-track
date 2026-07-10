@@ -34,6 +34,7 @@ CORE_MODULES = (
     "marine_track.calibration_phase2_tiles",
     "marine_track.calibration_phase2_evaluation",
     "marine_track.telegram_bot",
+    "marine_track.health",
     "marine_track.telegram_calibration",
     "marine_track.telegram_calibration_phase2",
     "marine_track.telegram_detection",
