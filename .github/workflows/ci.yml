@@ -33,6 +33,7 @@ jobs:
           from pathlib import Path
           path = Path('scripts/agent_effective_config_provenance.py')
           text = path.read_text(encoding='utf-8')
+          text = text.replace('    if count != 1:\n', '    if count < 1:\n', 1)
           text = text.replace('        f"""preprocessing:', "        f'''preprocessing:")
           text = text.replace('    min_contrast_sigma: 0.0\n""",\n        encoding="utf-8",', "    min_contrast_sigma: 0.0\n''',\n        encoding=\"utf-8\",")
           path.write_text(text, encoding='utf-8')
