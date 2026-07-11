@@ -1,0 +1,77 @@
+name: Finalize operational Sentinel-1 implementation
+
+on:
+  push:
+    branches:
+      - agent/operational-s1-preprocessing-20260710
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/operational-s1-preprocessing-20260710
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply reviewed source patches
+        run: |
+          set -Eeuo pipefail
+          for patch in \
+            scripts/.operational-s1-01-config-runtime.patch \
+            scripts/.operational-s1-02-processing-pipeline.patch \
+            scripts/.operational-s1-03-materialization.patch \
+            scripts/.operational-s1-04-explicit-source.patch
+          do
+            echo "Applying $patch"
+            git apply --3way "$patch"
+          done
+          if git grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- . ':!scripts/.operational-s1-*'; then
+            echo 'Merge conflict markers remain.' >&2
+            exit 1
+          fi
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Format and validate
+        run: |
+          set -Eeuo pipefail
+          ruff check --fix src tests runtime_check.py
+          python -m compileall -q src runtime_check.py
+          bash -n install_telegram_bot.sh deploy_telegram_bot.sh
+          ruff check src tests runtime_check.py
+          pytest -q
+      - name: Commit tested implementation
+        run: |
+          set -Eeuo pipefail
+          rm -f scripts/.operational-s1-*.patch
+          rm -f scripts/.ops1.payload.* scripts/.operational-s1-overlay.*
+          rm -f .github/workflows/agent-finalize-operational-s1.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git diff --cached --check
+          test -n "$(git diff --cached --name-only -- src tests config docs runtime_check.py .env.example)"
+          git commit -m 'Operationalize Sentinel-1 preprocessing and materialization safety'
+          git push origin HEAD:agent/operational-s1-preprocessing-20260710
+      - name: Publish diagnostics
+        if: failure()
+        run: |
+          {
+            echo 'Operational Sentinel-1 finalization failed.'
+            echo
+            echo '```text'
+            git status --short || true
+            echo '```'
+          } > /tmp/ops1-diagnostics.md
+          gh pr comment 24 --body-file /tmp/ops1-diagnostics.md || true
