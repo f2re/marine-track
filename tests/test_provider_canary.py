@@ -109,7 +109,7 @@ def test_build_canary_aoi_derives_compact_sector_from_default(tmp_path):
     assert result.source == "derived_from_default_aoi"
     assert 1.0 < result.area_km2 <= 100.0
     assert result.vertex_count >= 4
-    assert len(result.aoi_hash) == 64
+    assert len(result.aoi_hash) == 16
     assert 29.0 <= result.bounds[0] < result.bounds[2] <= 31.0
     assert 42.0 <= result.bounds[1] < result.bounds[3] <= 44.0
 

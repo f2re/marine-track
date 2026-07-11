@@ -21,12 +21,11 @@ from shapely.ops import transform, unary_union
 from marine_track.cache_policy import aoi_hash_from_geojson
 from marine_track.detection_pipeline import DetectionRunResult, run_detection_for_token
 from marine_track.detection_scene_search import search_detection_capable_scenes
-from marine_track.models import Scene, Sensor
+from marine_track.models import Sensor
 from marine_track.provenance import code_version, package_version, redact_value, sanitize_url
 from marine_track.resource_limits import ResourceLimits, validate_geojson_payload
 from marine_track.scene_materializer import (
     AssetProbe,
-    MaterializationError,
     prepare_asset_access,
     probe_raster_asset,
     select_processing_asset_record,
@@ -460,7 +459,7 @@ def _compact_aoi_from_payload(payload: dict[str, Any], side_km: float) -> dict[s
             {
                 "type": "Feature",
                 "properties": {"name": "marine-track-provider-canary"},
-                "geometry": mapping(output),
+                "geometry": json.loads(json.dumps(mapping(output))),
             }
         ],
     }
@@ -588,7 +587,7 @@ def _sanitize_text(text: str, base_dir: Path) -> str:
         value,
     )
     value = re.sub(
-        r"(?<![:\w])/(?:[^/\s]+/)+[^/\s:;,]+",
+        r"(?<![/:\w])/(?:[^/\s]+/)+[^/\s:;,]+",
         lambda match: f"<local>/{Path(match.group(0)).name}",
         value,
     )

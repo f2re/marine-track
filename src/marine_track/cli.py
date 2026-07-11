@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import typer
@@ -23,6 +24,7 @@ from marine_track.models import Sensor
 from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.pipeline import parse_utc_datetime, run_search_stage, search_scenes_with_fallback
 from marine_track.processing_config import load_effective_detector_config
+from marine_track.provider_canary import CanaryMode, run_provider_canary
 from marine_track.raster_detection import detect_candidates_from_raster
 from marine_track.sensor_preprocessing import build_local_preprocessing_plan
 
@@ -148,6 +150,50 @@ def detect_raster(
         f"[green]Saved {len(detections)} candidates to {output}[/green] "
         f"config={effective.config_hash[:12]}"
     )
+
+
+@app.command("provider-canary")
+def provider_canary_command(
+    mode: CanaryMode = typer.Option(CanaryMode.ASSET, help="asset or detection"),
+    output_dir: Path = typer.Option(
+        Path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram")),
+        help="Runtime output directory",
+    ),
+    base_dir: Path = typer.Option(Path("."), help="Base for relative AOI/config paths"),
+    default_aoi: Path = typer.Option(
+        Path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson")),
+        help="Default AOI used when no dedicated canary AOI is configured",
+    ),
+    aoi: Path | None = typer.Option(
+        None,
+        exists=True,
+        readable=True,
+        help="Optional compact canary AOI; overrides MARINE_TRACK_CANARY_AOI",
+    ),
+    lookback_hours: int | None = typer.Option(None, min=1, max=720),
+    max_results: int | None = typer.Option(None, min=1, max=20),
+    owner_user_id: int = typer.Option(1, min=1, help="Isolated detection-registry owner"),
+    owner_chat_id: int = typer.Option(1, help="Isolated detection-registry chat scope"),
+) -> None:
+    """Run an explicitly requested live Sentinel-1 provider canary."""
+    land_mask = os.getenv("MARINE_TRACK_LAND_MASK_GEOJSON", "").strip() or None
+    shoreline_raw = os.getenv("MARINE_TRACK_SHORELINE_BUFFER_M", "0").strip() or "0"
+    result = run_provider_canary(
+        mode=mode,
+        output_dir=output_dir,
+        default_aoi=default_aoi,
+        base_dir=base_dir,
+        explicit_aoi=aoi,
+        lookback_hours=lookback_hours,
+        max_results=max_results,
+        owner_user_id=owner_user_id,
+        owner_chat_id=owner_chat_id,
+        land_mask_geojson=land_mask,
+        shoreline_buffer_m=float(shoreline_raw),
+    )
+    console.print_json(data=result.report)
+    if not result.ok:
+        raise typer.Exit(code=1)
 
 
 @app.command("effective-config")

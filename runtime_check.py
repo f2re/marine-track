@@ -32,6 +32,7 @@ CORE_MODULES = (
     "marine_track.processing_config",
     "marine_track.resource_limits",
     "marine_track.sensor_preprocessing",
+    "marine_track.provider_canary",
     "marine_track.provenance",
     "marine_track.calibration",
     "marine_track.calibration_areas",
@@ -45,6 +46,7 @@ CORE_MODULES = (
     "marine_track.telegram_calibration_areas",
     "marine_track.telegram_calibration_phase2",
     "marine_track.telegram_detection",
+    "marine_track.telegram_selftest",
     "marine_track.telegram_ui",
     "marine_track.telegram_user_state",
     "marine_track.smoke_check",
@@ -156,6 +158,9 @@ def check_paths() -> list[str]:
         errors.append(
             f"calibration context GeoJSON not found: {project_path(calibration_context)}"
         )
+    canary_aoi = os.getenv("MARINE_TRACK_CANARY_AOI", "").strip()
+    if canary_aoi and not project_path(canary_aoi).is_file():
+        errors.append(f"canary AOI GeoJSON not found: {project_path(canary_aoi)}")
     local_track_csv = os.getenv("MARINE_TRACK_AIS_CSV", "").strip()
     if local_track_csv and not project_path(local_track_csv).is_file():
         errors.append(f"local vessel track CSV not found: {project_path(local_track_csv)}")
@@ -273,6 +278,8 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_CFAR_MIN_TRAINING_FRACTION",
         "MARINE_TRACK_MAX_AOI_AREA_KM2",
         "MARINE_TRACK_RASTER_LOCK_TIMEOUT_S",
+        "MARINE_TRACK_CANARY_SIDE_KM",
+        "MARINE_TRACK_CANARY_MAX_AREA_KM2",
     }
     names = (
         "MARINE_TRACK_DEFAULT_LOOKBACK_HOURS",
@@ -291,6 +298,10 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_NORMALIZATION_SAMPLE_PIXELS",
         "MARINE_TRACK_S1_LEE_WINDOW_PX",
         "MARINE_TRACK_RASTER_LOCK_TIMEOUT_S",
+        "MARINE_TRACK_CANARY_LOOKBACK_HOURS",
+        "MARINE_TRACK_CANARY_MAX_RESULTS",
+        "MARINE_TRACK_CANARY_SIDE_KM",
+        "MARINE_TRACK_CANARY_MAX_AREA_KM2",
         "MARINE_TRACK_MAX_AOI_AREA_KM2",
         "MARINE_TRACK_MAX_AOI_VERTICES",
         "MARINE_TRACK_MAX_RASTER_PIXELS",
