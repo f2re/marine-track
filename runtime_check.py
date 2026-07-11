@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 import os
 import sys
 from pathlib import Path
@@ -30,6 +31,7 @@ CORE_MODULES = (
     "marine_track.pipeline",
     "marine_track.processing_config",
     "marine_track.resource_limits",
+    "marine_track.sensor_preprocessing",
     "marine_track.provenance",
     "marine_track.calibration",
     "marine_track.calibration_areas",
@@ -228,6 +230,37 @@ def check_processing_config() -> list[str]:
         return [f"processing config invalid: {exc}"]
 
 
+def check_feature_flags() -> list[str]:
+    errors: list[str] = []
+    for name in (
+        "MARINE_TRACK_ENABLE_SENTINEL2_SINGLE_BAND_EXPERIMENTAL",
+        "MARINE_TRACK_ENABLE_WAKE_RESEARCH",
+    ):
+        if env_flag(name) is None:
+            errors.append(f"{name} must be boolean")
+    speckle_filter = os.getenv("MARINE_TRACK_S1_SPECKLE_FILTER", "lee").strip().lower()
+    if speckle_filter not in {"none", "off", "false", "disabled", "lee"}:
+        errors.append("MARINE_TRACK_S1_SPECKLE_FILTER must be none or lee")
+    raw_window = os.getenv("MARINE_TRACK_S1_LEE_WINDOW_PX", "5").strip()
+    try:
+        lee_window = int(raw_window)
+    except ValueError:
+        errors.append(f"MARINE_TRACK_S1_LEE_WINDOW_PX must be an integer, got {raw_window!r}")
+    else:
+        if speckle_filter == "lee" and (lee_window < 3 or lee_window % 2 == 0):
+            errors.append("MARINE_TRACK_S1_LEE_WINDOW_PX must be an odd integer >= 3")
+
+    raw_timeout = os.getenv("MARINE_TRACK_RASTER_LOCK_TIMEOUT_S", "300").strip()
+    try:
+        timeout = float(raw_timeout)
+    except ValueError:
+        pass  # check_numeric_env reports the concrete parse error.
+    else:
+        if not math.isfinite(timeout) or timeout <= 0:
+            errors.append("MARINE_TRACK_RASTER_LOCK_TIMEOUT_S must be finite and positive")
+    return errors
+
+
 def check_numeric_env() -> list[str]:
     errors: list[str] = []
     float_names = {
@@ -239,6 +272,7 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_DETECTION_MIN_CONTRAST_SIGMA",
         "MARINE_TRACK_CFAR_MIN_TRAINING_FRACTION",
         "MARINE_TRACK_MAX_AOI_AREA_KM2",
+        "MARINE_TRACK_RASTER_LOCK_TIMEOUT_S",
     }
     names = (
         "MARINE_TRACK_DEFAULT_LOOKBACK_HOURS",
@@ -255,6 +289,8 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_DETECTION_TILE_SIZE_PX",
         "MARINE_TRACK_DETECTION_TILE_OVERLAP_PX",
         "MARINE_TRACK_NORMALIZATION_SAMPLE_PIXELS",
+        "MARINE_TRACK_S1_LEE_WINDOW_PX",
+        "MARINE_TRACK_RASTER_LOCK_TIMEOUT_S",
         "MARINE_TRACK_MAX_AOI_AREA_KM2",
         "MARINE_TRACK_MAX_AOI_VERTICES",
         "MARINE_TRACK_MAX_RASTER_PIXELS",
@@ -302,6 +338,7 @@ def main() -> int:
         + check_paths()
         + check_telegram_env(env_file)
         + check_processing_config()
+        + check_feature_flags()
         + check_numeric_env()
     )
     profile = os.getenv("MARINE_TRACK_PROVIDER_PROFILE", "all").strip().lower()

@@ -100,3 +100,7 @@ def test_run_detection_for_token_outputs_files(tmp_path):
     assert len(result.detections) >= 1
     assert len(result.crop_pngs) >= 1
     assert result.crop_pngs[0].is_file()
+    assert result.preprocessing_plan.sensor == "sentinel1"
+    assert result.preprocessing_plan.output_domain == "relative_backscatter_db"
+    assert result.wake_research_enabled is False
+    assert all(item.research_proxies.kelvin_speed is None for item in result.detections)

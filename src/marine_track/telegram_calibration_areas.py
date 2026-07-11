@@ -24,6 +24,7 @@ from marine_track.calibration_areas import (
     paginate_areas,
 )
 from marine_track.models import Sensor
+from marine_track.sensor_preprocessing import sentinel2_single_band_enabled
 from marine_track.telegram_calibration_phase2 import context_geojson, phase2_targets
 from marine_track.telegram_config import TelegramBotConfig
 from marine_track.telegram_scene_browser import bbox_geojson, read_geojson
@@ -39,6 +40,7 @@ ACTION_AREA_SENSOR = "asensor"
 ACTION_AREA_SEARCH = "asearch"
 ACTION_AREA_RUN = "arun"
 ACTION_AREA_BATCH = "abatch"
+ACTION_AREA_S2_INFO = "as2info"
 CALIBRATION_AREA_ACTIONS = {
     ACTION_AREA_HOME,
     ACTION_AREA_GROUP,
@@ -49,6 +51,7 @@ CALIBRATION_AREA_ACTIONS = {
     ACTION_AREA_SEARCH,
     ACTION_AREA_RUN,
     ACTION_AREA_BATCH,
+    ACTION_AREA_S2_INFO,
 }
 SENSOR_CODES = {"s1": Sensor.SENTINEL1, "s2": Sensor.SENTINEL2, "auto": Sensor.AUTO}
 PERIODS = (24, 72, 168, 336, 720)
@@ -97,6 +100,9 @@ async def calibration_area_callback(
         return
     if action == ACTION_AREA_SENSOR and len(parts) == 4:
         await show_period_choice(update, config, parts[2], parts[3])
+        return
+    if action == ACTION_AREA_S2_INFO and len(parts) == 3:
+        await show_sentinel2_not_ready(update, parts[2])
         return
     if action == ACTION_AREA_SEARCH and len(parts) == 5:
         await search_area(update, config, parts[2], parts[3], _hours(parts[4]))
@@ -294,24 +300,84 @@ async def show_area_sensor_choice(
         )
         return
     west, south, east, north = area["bbox"]
+    s2_note = (
+        "Sentinel-2 single-band разрешён только как явный research-режим."
+        if sentinel2_single_band_enabled()
+        else (
+            "Sentinel-2 operational пока недоступен: нужен согласованный стек "
+            "B02/B03/B04/B08 и SCL/cloud/water masks."
+        )
+    )
     text = (
         f"🗺 <b>{html.escape(str(area['name']))}</b>\n"
         f"Источник: <code>{html.escape(str(area['source']))}</code>\n"
         f"bbox: <code>{west:g}, {south:g}, {east:g}, {north:g}</code>\n\n"
-        "Выберите сенсор. <b>Sentinel-1</b> рекомендуется для первого набора; "
-        "Sentinel-2 полезен для отдельного optical-профиля."
+        "Выберите сенсор. <b>Sentinel-1</b> — текущий operational baseline. "
+        f"{s2_note}"
     )
-    rows = [
+    await target.reply_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=area_sensor_markup(area_ref),
+    )
+
+
+def area_sensor_markup(area_ref: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton("📡 Sentinel-1 · рекомендовано", callback_data=_cb(ACTION_AREA_SENSOR, area_ref, "s1"))
-        ],
-        [
-            InlineKeyboardButton("🌈 Sentinel-2", callback_data=_cb(ACTION_AREA_SENSOR, area_ref, "s2")),
-            InlineKeyboardButton("🔄 Auto", callback_data=_cb(ACTION_AREA_SENSOR, area_ref, "auto")),
-        ],
-        [InlineKeyboardButton("⬅️ Акватории", callback_data=_cb(ACTION_AREA_HOME))],
+            InlineKeyboardButton(
+                "📡 Sentinel-1 · operational",
+                callback_data=_cb(ACTION_AREA_SENSOR, area_ref, "s1"),
+            )
+        ]
     ]
-    await target.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows))
+    if sentinel2_single_band_enabled():
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "🧪 Sentinel-2 single-band · research",
+                    callback_data=_cb(ACTION_AREA_SENSOR, area_ref, "s2"),
+                )
+            ]
+        )
+    else:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "🚫 Sentinel-2 · multiband stack не готов",
+                    callback_data=_cb(ACTION_AREA_S2_INFO, area_ref),
+                )
+            ]
+        )
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    "🔄 Auto · Sentinel-1 сначала",
+                    callback_data=_cb(ACTION_AREA_SENSOR, area_ref, "auto"),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ Акватории",
+                    callback_data=_cb(ACTION_AREA_HOME),
+                )
+            ],
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
+
+
+async def show_sentinel2_not_ready(update: Update, area_ref: str) -> None:
+    target = _target(update)
+    if not target:
+        return
+    await target.reply_text(
+        "Sentinel-2 single-band нельзя использовать как operational detector. "
+        "Для корректного optical-контура нужны совместно выровненные B02/B03/B04/B08, "
+        "SCL, cloud mask и water mask. До реализации этого стека используйте Sentinel-1.",
+        reply_markup=area_sensor_markup(area_ref),
+    )
 
 
 async def show_period_choice(

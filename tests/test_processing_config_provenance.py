@@ -137,13 +137,20 @@ def test_detection_report_uses_effective_config_and_redacted_provenance(tmp_path
     )
     report_text = result.report_json.read_text(encoding="utf-8")
     report = json.loads(report_text)
-    assert report["schema_version"] == 3
+    assert report["schema_version"] == 4
     assert report["result_type"] == "vessel_candidates"
     assert report["candidates"]
     assert result.runtime_state_json.is_file()
     assert report["detector"]["threshold_sigma"] == 1.0
     assert report["reproducibility"]["code"]["commit"] == "test-commit"
     assert report["reproducibility"]["scene"]["asset"]["units"] == "amplitude"
+    assert report["preprocessing"]["input_domain"] == "amplitude"
+    assert report["preprocessing"]["calibration_status"] == "relative_uncalibrated_amplitude"
+    assert report["preprocessing"]["output_domain"] == "relative_backscatter_db"
+    assert report["wake_research_proxy"]["enabled"] is False
+    runtime_state = json.loads(result.runtime_state_json.read_text(encoding="utf-8"))
+    assert runtime_state["schema_version"] == 2
+    assert runtime_state["preprocessing"] == report["preprocessing"]
     assert report["reproducibility"]["raster"]["width"] == 64
     assert str(tmp_path) not in report_text
     assert "config_hash" in report["detector"]

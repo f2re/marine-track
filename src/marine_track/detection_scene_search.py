@@ -15,6 +15,10 @@ from marine_track.data_sources import SearchRequest, SentinelHubProvider, defaul
 from marine_track.models import Scene, Sensor
 from marine_track.resource_limits import validate_aoi_path
 from marine_track.scene_materializer import select_processing_asset
+from marine_track.sensor_preprocessing import (
+    SensorPreprocessingError,
+    ensure_detection_sensor_supported,
+)
 
 DETECTION_PROVIDER_ORDER = {
     Sensor.SENTINEL1: ["planetary_computer", "copernicus_cdse", "sentinelhub"],
@@ -41,7 +45,10 @@ def search_detection_capable_scenes(
     max_results: int = 20,
 ) -> DetectionSceneSearchResult:
     validate_aoi_path(aoi)
+    if sensor != Sensor.AUTO:
+        ensure_detection_sensor_supported(sensor)
     output.mkdir(parents=True, exist_ok=True)
+    errors: list[str] = []
     cache_key = search_cache_key(
         aoi,
         start,
@@ -56,24 +63,33 @@ def search_detection_capable_scenes(
         provider, concrete_sensor, scenes = cached
         processable = _processable_sorted(scenes)
         if processable:
-            scenes_json = write_scenes_json(processable, output / "scenes.json")
-            asset_manifest = write_asset_manifest(processable, output / "assets.csv")
-            return DetectionSceneSearchResult(
-                provider=provider,
-                sensor=concrete_sensor,
-                scenes=processable,
-                scenes_json=scenes_json,
-                asset_manifest=asset_manifest,
-                cache_hit=True,
-            )
+            try:
+                ensure_detection_sensor_supported(concrete_sensor)
+            except SensorPreprocessingError as exc:
+                errors.append(f"{concrete_sensor.value}/cache: {exc}")
+            else:
+                scenes_json = write_scenes_json(processable, output / "scenes.json")
+                asset_manifest = write_asset_manifest(processable, output / "assets.csv")
+                return DetectionSceneSearchResult(
+                    provider=provider,
+                    sensor=concrete_sensor,
+                    scenes=processable,
+                    scenes_json=scenes_json,
+                    asset_manifest=asset_manifest,
+                    cache_hit=True,
+                )
 
-    errors: list[str] = []
     providers = {
         provider.name: provider
         for provider in [*default_stac_providers(), SentinelHubProvider()]
     }
 
     for concrete_sensor in resolve_sensor_order(sensor):
+        try:
+            ensure_detection_sensor_supported(concrete_sensor)
+        except SensorPreprocessingError as exc:
+            errors.append(f"{concrete_sensor.value}: {exc}")
+            continue
         request = SearchRequest(
             aoi_geojson_path=aoi,
             start=start,

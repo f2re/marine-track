@@ -24,6 +24,7 @@ from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.pipeline import parse_utc_datetime, run_search_stage, search_scenes_with_fallback
 from marine_track.processing_config import load_effective_detector_config
 from marine_track.raster_detection import detect_candidates_from_raster
+from marine_track.sensor_preprocessing import build_local_preprocessing_plan
 
 app = typer.Typer(help="Marine Track MVP: vessel and ship-wake detection from satellite imagery")
 console = Console()
@@ -102,6 +103,10 @@ def detect_raster(
     provider: str = typer.Option("local"),
     product_id: str = typer.Option("local-raster"),
     acquisition_time: str = typer.Option(..., help="UTC acquisition time"),
+    asset_key: str = typer.Option("band1", help="Band/polarization asset key, e.g. vv"),
+    input_units: str | None = typer.Option(None, help="Declared raster units, e.g. amplitude, sigma0 or dB"),
+    input_scale: float = typer.Option(1.0, help="Scale applied before radiometric conversion"),
+    input_offset: float = typer.Option(0.0, help="Offset applied before radiometric conversion"),
     threshold_sigma: float | None = typer.Option(None),
     min_area_px: int | None = typer.Option(None),
     max_area_px: int | None = typer.Option(None),
@@ -119,6 +124,14 @@ def detect_raster(
         guard_window_px=guard_window_px,
         min_contrast_sigma=min_contrast_sigma,
     )
+    preprocessing_plan = build_local_preprocessing_plan(
+        satellite,
+        effective.preprocessing,
+        asset_key=asset_key,
+        input_units=input_units,
+        scale=input_scale,
+        offset=input_offset,
+    )
     detections = detect_candidates_from_raster(
         path=raster,
         satellite=satellite.value,
@@ -126,6 +139,7 @@ def detect_raster(
         product_id=product_id,
         acquisition_time=parse_utc_datetime(acquisition_time),
         **effective.detector_kwargs(),
+        preprocessing_plan=preprocessing_plan,
     )
     write_geojson(detections, output)
     write_csv(detections, output.with_suffix(".csv"))

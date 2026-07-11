@@ -11,7 +11,7 @@ import yaml
 
 from marine_track.models import Sensor
 
-PROCESSING_CONFIG_SCHEMA_VERSION = 2
+PROCESSING_CONFIG_SCHEMA_VERSION = 3
 DEFAULT_PROCESSING_CONFIG = Path("config/processing.yaml")
 
 
@@ -133,6 +133,8 @@ def load_effective_detector_config(
     )
     if not isinstance(preprocessing, dict):
         raise ValueError(f"preprocessing.{concrete_sensor.value} must be a mapping")
+    preprocessing = _resolve_preprocessing(concrete_sensor, preprocessing)
+    _validate_preprocessing(concrete_sensor, preprocessing)
 
     limits_root = payload.get("resource_limits")
     if limits_root is None:
@@ -253,7 +255,7 @@ def load_effective_detector_config(
         "max_tiles": int(values["max_tiles"]),
         "max_candidates": int(values["max_candidates"]),
     }
-    _validate_detector(method, normalized)
+    _validate_detector(method, normalized, preprocessing)
 
     hash_payload = {
         "schema_version": PROCESSING_CONFIG_SCHEMA_VERSION,
@@ -285,6 +287,68 @@ def load_effective_detector_config(
     )
 
 
+def _resolve_preprocessing(
+    sensor: Sensor,
+    preprocessing: dict[str, Any],
+) -> dict[str, Any]:
+    resolved = dict(preprocessing)
+    if sensor == Sensor.SENTINEL1:
+        raw_filter = os.getenv("MARINE_TRACK_S1_SPECKLE_FILTER")
+        if raw_filter is not None and raw_filter.strip():
+            resolved["speckle_filter"] = raw_filter.strip().lower()
+        raw_window = os.getenv("MARINE_TRACK_S1_LEE_WINDOW_PX")
+        if raw_window is not None and raw_window.strip():
+            try:
+                resolved["lee_window_px"] = int(raw_window)
+            except ValueError as exc:
+                raise ValueError(
+                    f"MARINE_TRACK_S1_LEE_WINDOW_PX has invalid value: {raw_window!r}"
+                ) from exc
+    elif sensor == Sensor.SENTINEL2:
+        resolved["experimental_single_band_enabled"] = _boolean_env(
+            "MARINE_TRACK_ENABLE_SENTINEL2_SINGLE_BAND_EXPERIMENTAL",
+            False,
+        )
+    return resolved
+
+
+def _boolean_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"{name} must be boolean, got {raw!r}")
+
+
+def _validate_preprocessing(sensor: Sensor, preprocessing: dict[str, Any]) -> None:
+    if sensor == Sensor.SENTINEL1:
+        speckle_filter = str(preprocessing.get("speckle_filter", "none") or "none").strip().lower()
+        if speckle_filter in {"off", "false", "disabled"}:
+            speckle_filter = "none"
+        preprocessing["speckle_filter"] = speckle_filter
+        if speckle_filter not in {"none", "lee"}:
+            raise ValueError("preprocessing.sentinel1.speckle_filter must be none or lee")
+        try:
+            lee_window = int(preprocessing.get("lee_window_px", 5))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("preprocessing.sentinel1.lee_window_px must be an integer") from exc
+        if speckle_filter == "lee" and (lee_window < 3 or lee_window % 2 == 0):
+            raise ValueError("preprocessing.sentinel1.lee_window_px must be an odd integer >= 3")
+        return
+
+    required = preprocessing.get("required_bands", ["B02", "B03", "B04", "B08"])
+    if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
+        raise ValueError("preprocessing.sentinel2.required_bands must be a list of strings")
+    missing = {"B02", "B03", "B04", "B08"} - {item.upper() for item in required}
+    if missing:
+        raise ValueError(
+            "preprocessing.sentinel2.required_bands is missing " + ", ".join(sorted(missing))
+        )
+
 def _number(
     mapping: dict[str, Any],
     key: str,
@@ -300,7 +364,11 @@ def _number(
         raise ValueError(f"{key} has invalid value: {value!r}") from exc
 
 
-def _validate_detector(method: str, values: dict[str, int | float]) -> None:
+def _validate_detector(
+    method: str,
+    values: dict[str, int | float],
+    preprocessing: dict[str, Any],
+) -> None:
     if method not in {"local_cfar", "global_threshold"}:
         raise ValueError(f"unsupported detector method: {method!r}")
     threshold_sigma = float(values["threshold_sigma"])
@@ -338,12 +406,16 @@ def _validate_detector(method: str, values: dict[str, int | float]) -> None:
     if tile_overlap < 0 or tile_overlap >= tile_size:
         raise ValueError("tile_overlap_px must be in [0, tile_size_px)")
     # The ownership boundary lies near the midpoint of the overlap. Each
-    # owning tile therefore needs two CFAR radii of overlap so that its
-    # complete outer training window is available at the boundary.
-    minimum_overlap = 2 * (local_window // 2)
-    if local_window > 0 and tile_overlap < minimum_overlap:
+    # owning tile therefore needs two radii of overlap so that both the CFAR
+    # training ring and any preprocessing filter have complete support.
+    cfar_radius = local_window // 2 if local_window > 0 else 0
+    filter_radius = 0
+    if str(preprocessing.get("speckle_filter", "none")).lower() == "lee":
+        filter_radius = int(preprocessing.get("lee_window_px", 5)) // 2
+    minimum_overlap = 2 * max(cfar_radius, filter_radius)
+    if minimum_overlap > 0 and tile_overlap < minimum_overlap:
         raise ValueError(
-            "tile_overlap_px is too small for the CFAR training/guard halo; "
+            "tile_overlap_px is too small for the preprocessing/CFAR halo; "
             f"minimum is {minimum_overlap}"
         )
     if normalization_sample_pixels < 10_000:

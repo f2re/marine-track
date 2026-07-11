@@ -75,6 +75,7 @@ def collect_health(
         base_dir,
     )
     checks.append(_processing_config_check(processing_path))
+    checks.append(_sensor_capability_check())
 
     default_aoi = _resolve_path(
         os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson"),
@@ -156,6 +157,40 @@ def _processing_config_check(path: Path) -> HealthCheck:
             critical=True,
             detail=f"{type(exc).__name__}: {exc}",
         )
+
+
+def _sensor_capability_check() -> HealthCheck:
+    try:
+        from marine_track.sensor_preprocessing import (
+            sentinel2_single_band_enabled,
+            wake_research_enabled,
+        )
+
+        s2_experimental = sentinel2_single_band_enabled()
+        wake_experimental = wake_research_enabled()
+    except Exception as exc:
+        return HealthCheck(
+            name="sensor_capabilities",
+            status="failed",
+            critical=True,
+            detail=f"invalid preprocessing feature flags: {type(exc).__name__}",
+        )
+    experimental = s2_experimental or wake_experimental
+    return HealthCheck(
+        name="sensor_capabilities",
+        status="warning" if experimental else "ok",
+        critical=False,
+        detail=(
+            "Sentinel-1 operational baseline; explicit research overrides enabled"
+            if experimental
+            else "Sentinel-1 operational baseline; incomplete Sentinel-2/wake research paths disabled"
+        ),
+        data={
+            "sentinel1": "operational_relative_or_provider_declared_backscatter",
+            "sentinel2_single_band_experimental": s2_experimental,
+            "wake_research": wake_experimental,
+        },
+    )
 
 
 def _writable_check(name: str, path: Path) -> HealthCheck:

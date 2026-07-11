@@ -2,7 +2,9 @@ preprocessing:
   sentinel1:
     preferred_product: RTC
     fallback_product: GRD
+    radiometric_output: relative_or_provider_declared_backscatter_db
     speckle_filter: lee
+    lee_window_px: 5
     land_mask: true
     land_mask_geojson_env: MARINE_TRACK_LAND_MASK_GEOJSON
     shoreline_buffer_m_env: MARINE_TRACK_SHORELINE_BUFFER_M
@@ -12,6 +14,8 @@ preprocessing:
     normalization_sample_pixels: 1000000
 
   sentinel2:
+    operational_detection: false
+    research_single_band_env: MARINE_TRACK_ENABLE_SENTINEL2_SINGLE_BAND_EXPERIMENTAL
     use_cloud_mask: true
     use_water_mask: true
     target_resolution_m: 10
