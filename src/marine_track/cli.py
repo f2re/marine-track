@@ -23,6 +23,7 @@ from marine_track.models import Sensor
 from marine_track.output import write_csv, write_geojson, write_parquet
 from marine_track.pipeline import parse_utc_datetime, run_search_stage, search_scenes_with_fallback
 from marine_track.processing_config import load_effective_detector_config
+from marine_track.provider_canary import run_sentinel1_canary
 from marine_track.raster_detection import detect_candidates_from_raster
 from marine_track.sensor_preprocessing import build_local_preprocessing_plan
 
@@ -157,6 +158,45 @@ def effective_config_command(
     """Print validated detector parameters and reproducibility hash."""
     effective = load_effective_detector_config(sensor)
     console.print_json(data=effective.as_report_dict())
+
+
+@app.command("provider-canary")
+def provider_canary(
+    mode: str = typer.Option("asset", help="asset or detection"),
+    output_dir: Path = typer.Option(Path(os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram"))),
+    default_aoi: Path = typer.Option(
+        Path(os.getenv("MARINE_TRACK_DEFAULT_AOI", "data/aoi/example_black_sea.geojson"))
+    ),
+    canary_aoi: Path | None = typer.Option(None, help="Optional explicit compact-source AOI"),
+    lookback_hours: int | None = typer.Option(None, help="Defaults to MARINE_TRACK_CANARY_LOOKBACK_HOURS"),
+    max_results: int | None = typer.Option(None, help="Defaults to MARINE_TRACK_CANARY_MAX_RESULTS"),
+    span_deg: float | None = typer.Option(None, help="Compact AOI span in degrees"),
+    owner_user_id: int = typer.Option(0, help="Required for detection mode"),
+    owner_chat_id: int = typer.Option(0, help="Required for detection mode"),
+    confirm_detection: bool = typer.Option(
+        False,
+        "--confirm-detection",
+        help="Explicitly allow the quota-using end-to-end detection canary",
+    ),
+) -> None:
+    """Run a redacted Sentinel-1 provider/asset or compact detection canary."""
+
+    result = run_sentinel1_canary(
+        output_dir=output_dir,
+        default_aoi=default_aoi,
+        mode=mode,
+        canary_aoi=canary_aoi,
+        lookback_hours=lookback_hours,
+        max_results=max_results,
+        span_deg=span_deg,
+        owner_user_id=owner_user_id,
+        owner_chat_id=owner_chat_id,
+        confirm_detection=confirm_detection,
+    )
+    console.print_json(data=result.report)
+    console.print(f"report_file: {result.report_path.name}")
+    if result.report.get("status") != "success":
+        raise typer.Exit(code=1)
 
 
 @app.command("calibration-generate-tiles")

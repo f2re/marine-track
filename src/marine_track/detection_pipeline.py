@@ -94,6 +94,7 @@ def run_detection_for_token(
     min_contrast_sigma: float | None = None,
     land_mask_geojson: str | Path | None = None,
     shoreline_buffer_m: float = 0.0,
+    wake_enabled_override: bool | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> DetectionRunResult:
     run_dir = output_dir / "detections" / token
@@ -126,7 +127,11 @@ def run_detection_for_token(
     )
     detector_kwargs = effective_config.detector_kwargs()
 
-    wake_enabled = wake_research_enabled()
+    wake_enabled = (
+        wake_research_enabled()
+        if wake_enabled_override is None
+        else bool(wake_enabled_override)
+    )
     report_progress(
         progress_callback,
         "3/5 detect · preprocessing, CFAR, scale, shape, AIS reference",

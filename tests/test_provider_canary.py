@@ -124,7 +124,7 @@ def test_asset_canary_probes_signed_asset_and_persists_redacted_report(tmp_path,
         span_deg=0.05,
     )
 
-    assert result.report["status"] == "success"
+    assert result.report["status"] == "success", result.report
     assert result.report["asset"]["probe"]["range_supported"] is True
     assert seen["provider"] == "planetary_computer"
     report_text = result.report_path.read_text(encoding="utf-8")
@@ -204,7 +204,7 @@ def test_detection_canary_registers_scoped_scene_and_forces_wake_off(tmp_path, m
         max_results=1,
     )
 
-    assert result.report["status"] == "success"
+    assert result.report["status"] == "success", result.report
     assert result.report["detection"]["candidate_count"] == 2
     assert result.report["detection"]["wake_research_enabled"] is False
     assert captured["wake_enabled_override"] is False

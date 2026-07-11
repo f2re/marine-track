@@ -25,6 +25,7 @@ ACTION_DATES_LAST_BBOX = "dates_last_bbox"
 ACTION_AREAS = "areas"
 ACTION_OUTPUT_MODE = "output_mode"
 ACTION_CALIBRATION = "calibration"
+ACTION_SELFTEST = "selftest"
 ACTION_MENU = "menu"
 ACTION_STATUS = "status"
 ACTION_HELP = "help"
@@ -89,7 +90,11 @@ def main_menu_markup(
                 InlineKeyboardButton(
                     f"{marker}🧪 Калибровка",
                     callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_CALIBRATION}",
-                )
+                ),
+                InlineKeyboardButton(
+                    "🩺 Самопроверка",
+                    callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_SELFTEST}",
+                ),
             ]
         )
     rows.append(
