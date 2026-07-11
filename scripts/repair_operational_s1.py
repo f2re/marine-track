@@ -45,6 +45,24 @@ text = replace_once(
 )
 path.write_text(text, encoding="utf-8")
 
+materialization_test = Path("tests/test_materialization_safety.py")
+test_text = materialization_test.read_text(encoding="utf-8")
+test_text = replace_once(
+    test_text,
+    '''    with pytest.raises(MaterializationError, match="finite and positive"):
+        with materialization_lock(tmp_path / "scene.tif", float("nan")):
+            pass
+''',
+    '''    with (
+        pytest.raises(MaterializationError, match="finite and positive"),
+        materialization_lock(tmp_path / "scene.tif", float("nan")),
+    ):
+        pass
+''',
+    "SIM117 combined context managers",
+)
+materialization_test.write_text(test_text, encoding="utf-8")
+
 health = Path("src/marine_track/health.py").read_text(encoding="utf-8")
 if 'release_id=os.getenv("MARINE_TRACK_RELEASE_ID", "unknown") or "unknown"' not in health:
     raise RuntimeError("retry-safe deployment release identity was lost")
