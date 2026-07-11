@@ -21,7 +21,6 @@ from marine_track.telegram_scene_browser import (
     bbox_geojson,
     parse_scene_hours,
     parse_scene_sensor,
-    read_geojson,
     register_scenes,
     run_dir,
     utc_window,
