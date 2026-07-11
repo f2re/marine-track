@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import html
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
@@ -93,10 +93,12 @@ async def selftest_callback(
     elif action == ACTION_LAST:
         await show_latest_report(update, config)
     else:
-        await query.message.reply_text(
-            "Кнопка self-test устарела. Откройте /selftest заново.",
-            reply_markup=selftest_menu_markup(),
-        )
+        target = _target(update)
+        if target:
+            await target.reply_text(
+                "Кнопка self-test устарела. Откройте /selftest заново.",
+                reply_markup=selftest_menu_markup(),
+            )
 
 
 async def require_selftest_admin(update: Update, config: TelegramBotConfig) -> bool:
@@ -291,12 +293,12 @@ def selftest_result_markup(mode: str) -> InlineKeyboardMarkup:
 def format_canary_report(report: dict[str, Any]) -> str:
     passed = report.get("status") == "passed"
     icon = "✅" if passed else "⛔"
-    result = report.get("result") if isinstance(report.get("result"), dict) else {}
-    search = result.get("search") if isinstance(result.get("search"), dict) else {}
-    asset = result.get("asset") if isinstance(result.get("asset"), dict) else {}
-    probe = asset.get("probe") if isinstance(asset.get("probe"), dict) else {}
-    detection = result.get("detection") if isinstance(result.get("detection"), dict) else {}
-    aoi = report.get("aoi") if isinstance(report.get("aoi"), dict) else {}
+    result = _as_dict(report.get("result"))
+    search = _as_dict(result.get("search"))
+    asset = _as_dict(result.get("asset"))
+    probe = _as_dict(asset.get("probe"))
+    detection = _as_dict(result.get("detection"))
+    aoi = _as_dict(report.get("aoi"))
 
     lines = [
         f"{icon} <b>Sentinel-1 self-test: {html.escape(str(report.get('status') or 'unknown'))}</b>",
@@ -347,7 +349,7 @@ def format_canary_report(report: dict[str, Any]) -> str:
                 f"{int(stage.get('duration_ms') or 0)} ms"
             )
 
-    error = report.get("error") if isinstance(report.get("error"), dict) else None
+    error = _as_dict(report.get("error"))
     if error:
         lines.extend(
             [
@@ -362,11 +364,21 @@ def format_canary_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return cast(dict[str, Any], value)
+
+
 def _callback(action: str) -> str:
     return f"{SELFTEST_CALLBACK_PREFIX}:{action}"
 
 
-def _target(update: Update):
-    return update.effective_message or (
-        update.callback_query.message if update.callback_query else None
-    )
+def _target(update: Update) -> Message | None:
+    target = update.effective_message
+    if isinstance(target, Message):
+        return target
+    query = update.callback_query
+    if query and isinstance(query.message, Message):
+        return query.message
+    return None
