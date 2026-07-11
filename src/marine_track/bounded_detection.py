@@ -6,6 +6,7 @@ import os
 import queue
 import time
 from collections.abc import Callable
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ class DetectionTimeoutError(DetectionProcessError):
 
 
 def configured_detection_timeout_s(explicit: float | None = None) -> float:
-    raw: object = (
+    raw: str | float = (
         explicit
         if explicit is not None
         else os.getenv(
@@ -114,7 +115,8 @@ def _run_worker_process(
 
     context = multiprocessing.get_context(context_name)
     messages = context.Queue()
-    process = context.Process(
+    # Typeshed does not expose the dynamically selected context's Process factory.
+    process: BaseProcess = context.Process(  # type: ignore[attr-defined]
         target=worker,
         args=(messages, *worker_args),
         name="marine-track-detection",
@@ -229,7 +231,7 @@ def _safe_worker_error(exc: BaseException, base_dir: Path) -> dict[str, str]:
     }
 
 
-def _terminate_process(process) -> None:
+def _terminate_process(process: BaseProcess) -> None:
     if not process.is_alive():
         process.join(timeout=1.0)
         return
