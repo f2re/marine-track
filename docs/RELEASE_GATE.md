@@ -28,7 +28,9 @@ Release gate отделяет воспроизводимый engineering/runtime
 - [x] Search-only cache не используется как detection-capable результат без повторной capability проверки.
 - [x] Processable сцены сортируются детерминированно по acquisition time и product id.
 - [x] Search/raster cache и materialization используют atomic writes/locks и recovery contract.
-- [ ] Telegram user state полностью transactional между процессами, с `fsync`, quarantine и parallel lost-update test; реализация остаётся в отдельном draft PR #30.
+- [x] Telegram user state использует полный inter-process read-modify-write `flock`, same-directory temp, file/directory `fsync`, `os.replace`, mode `0600`, corruption quarantine и versioned schema.
+- [x] Legacy unversioned Telegram state читается и обновляется без простоя; неизвестная будущая schema fail-closed и не перезаписывается старым release.
+- [x] Параллельный multi-process regression test не теряет bbox updates; health проверяет state отдельно без user content или абсолютного пути.
 - [x] Пустой `TELEGRAM_ADMIN_IDS` не открывает operational commands; public mode только explicit.
 - [x] Scene tokens/callbacks привязаны к user/chat; cross-user replay отклоняется.
 - [x] Detection AOI/result/raster/tile/candidate limits применяются до соответствующих дорогих операций.
@@ -68,19 +70,19 @@ Release gate отделяет воспроизводимый engineering/runtime
 - [ ] AIS matching полностью закрывает max interpolation gap, one-to-one assignment, ambiguity margin и acquisition-time uncertainty для benchmark.
 - [x] Feature units/domain/applicability contract зафиксирован в [`FEATURE_CATALOG.md`](FEATURE_CATALOG.md).
 
-## Проверенный срез `main` — 2026-07-11
+## Проверенный offline-срез — 2026-07-11
 
-PR #29 слит как `dc3833011be8584737b047c6c322fbe8ceda5032`. Временная write-capable merge orchestration удалена отдельным PR #32; актуальный cleanup commit — `b128873d6e443cedc7628312babae12323fb9d62`.
+Provider canary и bounded detection вошли через PR #29; временная write-capable merge orchestration удалена PR #32. Transactional Telegram user state реализован в PR #30 без временных self-finalization workflow/script.
 
-GitHub Actions CI run 701 для cleanup head завершён успешно на том же runtime tree:
+Полный GitHub Actions gate на implementation head PR #30 завершён успешно:
 
 - shell syntax — passed;
 - `ruff` — passed;
-- `pytest` — **189 passed**;
+- `pytest` — **200 passed**;
 - raw mypy — 145 ошибок против 145 на baseline; no-growth gate passed;
 - package build — passed, sdist и wheel созданы;
 - core `runtime_check.py` — passed.
 
-Этот срез не включает deploy на `us-vmpico`, post-switch Telegram healthcheck и live provider canary. Поэтому offline engineering gate зелёный, но server/deployment и data-access gates остаются открыты. Научный gate открыт, кроме уже зафиксированных fail-safe semantics.
+Этот срез не включает deploy на `us-vmpico`, post-switch Telegram healthcheck и live provider canary. Поэтому offline engineering gate зелёный, но target-host deployment и data-access gates остаются открыты. Научный gate открыт, кроме уже зафиксированных fail-safe semantics.
 
-Следующий один приоритет: обновить и довести до зелёного состояния существующий PR #30 с transactional Telegram user state, не создавая дубликат.
+Следующий один приоритет: fast-forward deploy актуального `main` на `us-vmpico`, зафиксировать release/rollback evidence и только затем явно запустить asset-only provider canary.
