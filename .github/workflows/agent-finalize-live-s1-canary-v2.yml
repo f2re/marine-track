@@ -1,0 +1,116 @@
+name: Finalize live Sentinel-1 canary v2
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  finalize:
+    if: github.head_ref == 'agent/live-s1-canary-selftest-20260711'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-s1-canary-selftest-20260711
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply and validate with diagnostics
+        run: |
+          set +e
+          status=0
+          stage=apply
+          logfile=/tmp/canary-apply.log
+          python scripts/apply_live_s1_canary.py > "$logfile" 2>&1 || status=$?
+          if test "$status" = 0; then
+            python - <<'PY' >> "$logfile" 2>&1 || status=$?
+          from pathlib import Path
+
+          path = Path('tests/test_provider_canary.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '    assert result.report["status"] == "success"\n',
+              '    assert result.report["status"] == "success", result.report\n',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+          fi
+          if test "$status" = 0; then
+            stage=install
+            logfile=/tmp/canary-install.log
+            python -m pip install --upgrade pip > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then pip install -e .[dev] >> "$logfile" 2>&1 || status=$?; fi
+          if test "$status" = 0; then
+            stage=ruff_fix
+            logfile=/tmp/canary-ruff-fix.log
+            ruff check --fix src tests runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=compile
+            logfile=/tmp/canary-compile.log
+            python -m compileall -q src runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=shell
+            logfile=/tmp/canary-shell.log
+            bash -n install_telegram_bot.sh deploy_telegram_bot.sh > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=ruff
+            logfile=/tmp/canary-ruff.log
+            ruff check src tests runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=pytest
+            logfile=/tmp/canary-pytest.log
+            pytest -q > "$logfile" 2>&1 || status=$?
+          fi
+          echo "$status" > /tmp/canary.status
+          echo "$stage" > /tmp/canary.stage
+          echo "$logfile" > /tmp/canary.logfile
+          test -f "$logfile" && cat "$logfile" || true
+          exit 0
+      - name: Publish diagnostics
+        if: always()
+        run: |
+          if test "$(cat /tmp/canary.status)" != 0; then
+            stage="$(cat /tmp/canary.stage)"
+            logfile="$(cat /tmp/canary.logfile)"
+            {
+              echo "Live Sentinel-1 canary finalization failed at stage: $stage"
+              echo
+              echo '```text'
+              test -f "$logfile" && tail -n 350 "$logfile" || true
+              echo
+              git status --short || true
+              echo '```'
+            } > /tmp/canary-diagnostics.md
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/canary-diagnostics.md || true
+          fi
+      - name: Gate
+        run: test "$(cat /tmp/canary.status)" = 0
+      - name: Commit clean source diff
+        run: |
+          set -Eeuo pipefail
+          rm -f scripts/apply_live_s1_canary.py
+          rm -f .github/workflows/agent-finalize-live-s1-canary.yml
+          rm -f .github/workflows/agent-finalize-live-s1-canary-v2.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git diff --cached --check
+          test -n "$(git diff --cached --name-only -- src tests docs runtime_check.py .env.example)"
+          test -z "$(git diff --cached --name-only | grep -E '(apply_live_s1_canary|agent-finalize-live-s1-canary)' || true)"
+          git commit -m 'Add live Sentinel-1 canary and administrator self-test'
+          git push origin HEAD:agent/live-s1-canary-selftest-20260711
