@@ -22,20 +22,70 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Apply integration changes
-        run: python scripts/apply_provider_canary.py
-      - name: Install package
+      - name: Apply and validate
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .[dev]
-      - name: Validate
+          set +e
+          status=0
+          stage=apply
+          logfile=/tmp/provider-canary-apply.log
+          python scripts/apply_provider_canary.py > "$logfile" 2>&1 || status=$?
+          if test "$status" = 0; then
+            stage=install
+            logfile=/tmp/provider-canary-install.log
+            python -m pip install --upgrade pip > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            pip install -e .[dev] >> "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=ruff_fix
+            logfile=/tmp/provider-canary-ruff-fix.log
+            ruff check --fix src tests runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=compile
+            logfile=/tmp/provider-canary-compile.log
+            python -m compileall -q src runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=shell
+            logfile=/tmp/provider-canary-shell.log
+            bash -n install_telegram_bot.sh deploy_telegram_bot.sh > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=ruff
+            logfile=/tmp/provider-canary-ruff.log
+            ruff check src tests runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=pytest
+            logfile=/tmp/provider-canary-pytest.log
+            pytest -q > "$logfile" 2>&1 || status=$?
+          fi
+          echo "$status" > /tmp/provider-canary.status
+          echo "$stage" > /tmp/provider-canary.stage
+          echo "$logfile" > /tmp/provider-canary.logfile
+          test -f "$logfile" && cat "$logfile" || true
+          exit 0
+      - name: Publish diagnostics
+        if: always()
         run: |
-          set -Eeuo pipefail
-          ruff check --fix src tests runtime_check.py
-          python -m compileall -q src runtime_check.py
-          bash -n install_telegram_bot.sh deploy_telegram_bot.sh
-          ruff check src tests runtime_check.py
-          pytest -q
+          if test "$(cat /tmp/provider-canary.status)" != 0; then
+            stage="$(cat /tmp/provider-canary.stage)"
+            logfile="$(cat /tmp/provider-canary.logfile)"
+            {
+              echo "Provider canary finalization failed at stage: $stage"
+              echo
+              echo '```text'
+              test -f "$logfile" && tail -n 350 "$logfile" || true
+              echo
+              git status --short || true
+              echo '```'
+            } > /tmp/provider-canary-diagnostics.md
+            gh pr comment 29 --body-file /tmp/provider-canary-diagnostics.md || true
+          fi
+      - name: Gate
+        run: test "$(cat /tmp/provider-canary.status)" = 0
       - name: Commit clean source diff
         run: |
           set -Eeuo pipefail
@@ -49,14 +99,3 @@ jobs:
           test -z "$(git diff --cached --name-only | grep -E '(apply_provider_canary|agent-finalize-provider-canary)' || true)"
           git commit -m 'Add live Sentinel-1 provider canary and administrator self-test'
           git push origin HEAD:agent/live-provider-selftest-20260711
-      - name: Publish diagnostics
-        if: failure()
-        run: |
-          {
-            echo 'Provider canary finalization failed.'
-            echo
-            echo '```text'
-            git status --short || true
-            echo '```'
-          } > /tmp/provider-canary-diagnostics.md
-          gh pr comment 29 --body-file /tmp/provider-canary-diagnostics.md || true
