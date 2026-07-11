@@ -71,6 +71,8 @@ elif [[ -f "$LEGACY_ENV" ]]; then
   log "reconciled $LEGACY_ENV with canonical environment file"
 fi
 log "canonical environment file: $ENV_FILE"
+log "provider secrets are optional and are not requested interactively"
+log "the default scene profile uses tokenless Planetary Computer; optional CDSE/Sentinel Hub credentials belong in $ENV_FILE"
 
 install -o root -g root -m 0644 \
   "$PROJECT_ROOT/ops/marine-track.service" /etc/systemd/system/marine-track.service
@@ -81,7 +83,7 @@ systemctl daemon-reload
 systemctl enable marine-track.service
 
 if [[ "$PREPARE_ONLY" == "1" ]]; then
-  log "installation prepared; edit $ENV_FILE, then run deploy_telegram_bot.sh"
+  log "installation prepared; set TELEGRAM_BOT_TOKEN and optional provider credentials in $ENV_FILE, then run deploy_telegram_bot.sh"
   exit 0
 fi
 
