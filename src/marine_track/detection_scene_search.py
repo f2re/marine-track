@@ -14,6 +14,7 @@ from marine_track.cache_policy import (
     write_scene_search_cache,
 )
 from marine_track.data_sources import SearchRequest, SentinelHubProvider, default_stac_providers
+from marine_track.data_sources.base import SceneProvider
 from marine_track.models import Scene, Sensor
 from marine_track.provider_auth import (
     cdse_credentials_configured,
@@ -72,8 +73,8 @@ def search_detection_capable_scenes(
     )
     cached = read_scene_search_cache(search_cache_path(cache_key))
     if cached is not None:
-        provider, concrete_sensor, scenes = cached
-        if provider_runtime_enabled(provider):
+        cached_provider_name, concrete_sensor, scenes = cached
+        if provider_runtime_enabled(cached_provider_name):
             processable = _processable_sorted(scenes)
             if processable:
                 try:
@@ -84,7 +85,7 @@ def search_detection_capable_scenes(
                     scenes_json = write_scenes_json(processable, output / "scenes.json")
                     asset_manifest = write_asset_manifest(processable, output / "assets.csv")
                     return DetectionSceneSearchResult(
-                        provider=provider,
+                        provider=cached_provider_name,
                         sensor=concrete_sensor,
                         scenes=processable,
                         scenes_json=scenes_json,
@@ -92,12 +93,17 @@ def search_detection_capable_scenes(
                         cache_hit=True,
                     )
         else:
-            errors.append(f"{concrete_sensor.value}/{provider}: optional credentials not configured")
+            errors.append(
+                f"{concrete_sensor.value}/{cached_provider_name}: "
+                "optional credentials not configured"
+            )
 
-    provider_instances = [*default_stac_providers()]
+    provider_instances: list[SceneProvider] = list(default_stac_providers())
     if sentinelhub_credentials_configured():
         provider_instances.append(SentinelHubProvider())
-    providers = {provider.name: provider for provider in provider_instances}
+    providers: dict[str, SceneProvider] = {
+        provider_instance.name: provider_instance for provider_instance in provider_instances
+    }
 
     for concrete_sensor in resolve_sensor_order(sensor):
         try:
@@ -118,11 +124,11 @@ def search_detection_capable_scenes(
                     f"{concrete_sensor.value}/{provider_name}: optional credentials not configured"
                 )
                 continue
-            provider = providers.get(provider_name)
-            if provider is None or not provider.can_handle(concrete_sensor):
+            provider_instance = providers.get(provider_name)
+            if provider_instance is None or not provider_instance.can_handle(concrete_sensor):
                 continue
             try:
-                scenes = provider.search(request)
+                scenes = provider_instance.search(request)
                 processable = _processable_sorted(scenes)
                 if processable:
                     scenes_json = write_scenes_json(processable, output / "scenes.json")
