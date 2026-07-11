@@ -1,69 +1,86 @@
 # Release Gate v0.2
 
-Release gate отделяет «код запускается» от «метод научно подтверждён». До закрытия engineering gate нельзя объявлять detector operational и расширять алгоритмы ради новых функций.
+Release gate отделяет воспроизводимый engineering/runtime contract от научной валидации. Закрытый offline CI gate не означает подтверждённый live provider access, успешный deploy на конкретном сервере или доказанную точность detector.
+
+Обозначения:
+
+- `[x]` — проверено текущим кодом и автоматизированным offline test/CI;
+- `[ ]` — требует отдельной проверки, внешнего доступа или ещё не реализовано.
 
 ## A. Engineering gate
 
-- [ ] `bash -n install_telegram_bot.sh` проходит.
-- [ ] `bash -n deploy_telegram_bot.sh` проходит.
-- [ ] `python -m pytest -q` проходит без stale tests.
-- [ ] `ruff check src tests` проходит.
-- [ ] `mypy` baseline отделяет optional-stub debt от реальных ошибок и не ухудшается.
-- [ ] CI проверяет заявленный Python support matrix и clean constrained install; `LICENSE` соответствует metadata.
-- [ ] Clean install создаёт рабочий `marine-track-bot.service`.
-- [ ] `MARINE_TRACK_PROVIDER_PROFILE=core` runtime check проходит с тестовым token.
-- [ ] Profile `all` либо проходит, либо явно сообщает отсутствующие optional provider modules/credentials.
-- [ ] Пустой Telegram token останавливает deploy до restart.
-- [ ] Неверный Telegram token останавливает deploy на healthcheck до restart.
-- [ ] `/start`, `/menu`, `/status`, `/whoami` отвечают после запуска.
-- [ ] `/dates` и `/detectbbox` возвращают сцены или typed provider/materializer error.
-- [ ] Preview/archive-only asset никогда не передаётся detector как raster.
-- [ ] Search cache key содержит абсолютные start/end, purpose/capability, filters, provider/config fingerprint и schema version.
-- [ ] `/dates` cache не может быть использован `/detectbbox` без detection-capability/readability revalidation.
-- [ ] Самая свежая сцена выбирается детерминированной сортировкой, а не случайным порядком provider response.
-- [ ] Search/raster cache atomic; параллельная загрузка одного asset защищена lock-файлом.
-- [ ] Registry/user-state пишутся atomic/locked, имеют schema version, recovery и полный retention contract.
-- [ ] Пустой `TELEGRAM_ADMIN_IDS` не открывает operational commands; public mode только explicit.
-- [ ] Scene tokens/callbacks привязаны к user/chat; cross-user replay отклоняется.
-- [ ] До provider/download применяются AOI/interval/result/bytes/time и per-user rate/concurrency limits.
-- [ ] Повторный deploy не перезаписывает `.env`, runs и готовую land mask.
-- [ ] Production code/venv read-only для service user; release switch/rollback атомарны.
-- [ ] Отчёт содержит provider, collection, typed asset, CRS/GSD, scene time interval, effective config, code commit и очищенные ошибки.
-- [ ] Logs/report не содержат bearer/SAS/query tokens, credentials, AIS path и абсолютные server paths.
+- [x] `bash -n install_telegram_bot.sh` проходит.
+- [x] `bash -n deploy_telegram_bot.sh` проходит.
+- [x] `python -m pytest -q` проходит без stale tests.
+- [x] `ruff check src tests` проходит.
+- [x] Контролируемый `mypy --no-incremental src` baseline не растёт относительно актуального `main`; raw debt сохраняется в diagnostics.
+- [x] `python -m build` создаёт sdist и wheel.
+- [x] `MARINE_TRACK_PROVIDER_PROFILE=core python runtime_check.py` проходит с тестовыми Telegram credentials.
+- [ ] CI проверяет весь заявленный Python support matrix и clean constrained install; `LICENSE` соответствует metadata.
+- [ ] Clean install на целевом сервере создаёт и запускает рабочий `marine-track.service`.
+- [ ] Profile `all` проверен в чистой production-like среде со всеми provider extras.
+- [x] Пустой Telegram token останавливает runtime/deploy preflight до restart.
+- [ ] Неверный Telegram token фактически отклонён post-switch Telegram healthcheck на целевом сервере с подтверждённым rollback.
+- [ ] `/start`, `/menu`, `/status`, `/whoami` проверены после реального systemd deploy.
+- [ ] `/dates` и `/detectbbox` проверены после реального systemd deploy и возвращают scene result либо typed provider/materializer failure.
+- [x] Preview/archive/search-only asset не передаётся detector как raster.
+- [x] Search cache key разделяет абсолютные start/end, purpose/capability и schema contract.
+- [x] Search-only cache не используется как detection-capable результат без повторной capability проверки.
+- [x] Processable сцены сортируются детерминированно по acquisition time и product id.
+- [x] Search/raster cache и materialization используют atomic writes/locks и recovery contract.
+- [ ] Telegram user state полностью transactional между процессами, с `fsync`, quarantine и parallel lost-update test; реализация остаётся в отдельном draft PR #30.
+- [x] Пустой `TELEGRAM_ADMIN_IDS` не открывает operational commands; public mode только explicit.
+- [x] Scene tokens/callbacks привязаны к user/chat; cross-user replay отклоняется.
+- [x] Detection AOI/result/raster/tile/candidate limits применяются до соответствующих дорогих операций.
+- [x] Telegram candidate detection выполняется в killable subprocess с wall-clock limit; stalled GDAL/rasterio worker завершается.
+- [x] Default Telegram detection использует bounded sector; oversized bbox отклоняется до provider/raster I/O.
+- [x] Повторный deploy сохраняет canonical environment, state, cache и versioned release directories по коду и offline tests.
+- [x] Production release switch/rollback атомарны по коду; release tree делается read-only для service user.
+- [x] Canary/report provenance содержит provider, typed asset/access mode, scene time, AOI hash, code identity, stage durations и очищенную ошибку.
+- [x] Sanitizer удаляет bearer/SAS/query tokens, credentials и локальные абсолютные пути из canary/detection errors и reports.
 
 ## B. Data-access gate
 
-- [ ] CDSE STAC использует `https://stac.dataspace.copernicus.eu/v1/`.
-- [ ] CDSE collections: `sentinel-1-grd`, `sentinel-2-l2a`.
-- [ ] CDSE OData fallback проверен на той же AOI/time window.
-- [ ] CDSE typed assets сохраняют media type/roles/band/units/nodata/auth/alternates и calibration/noise sidecars.
-- [ ] Planetary Computer auth/SAS preflight проверен отдельно от public catalog search.
-- [ ] Earth Search S1 не считается credentials-free: requester-pays S3 path либо проходит credential/cost canary, либо остаётся disabled.
-- [ ] ASF явно помечен как archive/preview до SAFE/GRD processing.
-- [ ] Provider capability и media type проверяются до materialization.
-- [ ] Operational provider path проходит live sign + range-read canary; offline import/config preflight не считается readiness.
+- [x] CDSE STAC baseline использует `https://stac.dataspace.copernicus.eu/v1/`.
+- [x] CDSE collection defaults: `sentinel-1-grd`, `sentinel-2-l2a`.
+- [ ] CDSE OData fallback live-проверен на той же AOI/time window.
+- [x] Typed `SceneAsset` хранит media type/roles/band/units/nodata/auth/alternates и доступные sidecar metadata.
+- [x] Planetary Computer является первым tokenless Sentinel-1 raster path; runtime signing остаётся transient.
+- [x] CDSE и Sentinel Hub без полных optional credentials пропускаются до OAuth/network call и не блокируют tokenless fallback.
+- [x] Earth Search S1 не используется как безусловно бесплатный operational Sentinel-1 raster path.
+- [x] ASF archive/preview assets не считаются processable GeoTIFF/COG до SAFE/GRD processor.
+- [x] Provider capability и media type проверяются до materialization.
+- [ ] Operational Planetary Computer path прошёл явный live search + signing + TIFF range-read canary на целевом сервере.
+- [ ] Detection canary прошёл отдельное operator confirmation, compact AOI и полный materialization/detection path.
 
 ## C. Scientific gate
 
-- [ ] Есть scene manifest, labels, negative scenes и data card.
-- [ ] Есть fixed scene-level/spatial-temporal train/validation/test split.
-- [ ] Есть classical CFAR baseline и error taxonomy.
+- [ ] Есть scene manifest, data card, positive/negative/uncertain labels и object/wake geometry schema.
+- [ ] Есть fixed scene-level/spatial-temporal train/validation/test split без утечки соседних сцен.
+- [ ] Есть classical CFAR baseline и формальная error taxonomy.
 - [ ] Метрики detection: precision/recall/F1, POD/FAR/CSI, false alarms/km², localization error.
 - [ ] Метрики wake: detection rate, false-wake rate, angular error.
-- [ ] Метрики speed: bias/MAE/RMSE/coverage against paired AIS/reference.
-- [ ] Метрики стратифицированы по sensor/polarization/incidence/wind/depth/coast/open sea.
-- [ ] `confidence` calibrated on a held-out calibration split; до этого это `evidence_score`.
-- [ ] Kelvin wavelength выдаётся только при applicability/QC/uncertainty.
-- [ ] AIS/Ocean context не подменяют отсутствие спутникового признака.
-- [ ] AIS matching имеет max interpolation gap, one-to-one assignment, ambiguity margin и acquisition-time uncertainty.
-- [ ] `speed.value`/Kelvin proxy/AIS SOG и heading axis/direction хранятся раздельно.
-- [ ] Feature units/domain/applicability соответствуют [`FEATURE_CATALOG.md`](FEATURE_CATALOG.md).
+- [ ] Метрики speed proxy: bias/MAE/RMSE/coverage against independently paired reference.
+- [ ] Метрики стратифицированы по sensor/polarization/incidence/wind/depth/coast/open sea/port/high-clutter.
+- [ ] Score калиброван на отдельном calibration split с uncertainty; до этого он остаётся ranking/evidence score, не вероятностью.
+- [ ] Kelvin wavelength/speed выдаётся только при applicability/QC/uncertainty и не показывается как подтверждённая скорость.
+- [x] Operational single-scene speed по умолчанию имеет `value_knots=null`, `method=not_estimated`; AIS хранится отдельно как external reference.
+- [ ] AIS matching полностью закрывает max interpolation gap, one-to-one assignment, ambiguity margin и acquisition-time uncertainty для benchmark.
+- [x] Feature units/domain/applicability contract зафиксирован в [`FEATURE_CATALOG.md`](FEATURE_CATALOG.md).
 
-## Current audit status (2026-07-10)
+## Проверенный срез `main` — 2026-07-11
 
-- Engineering: **не закрыт** — 77 tests passed, 4 failed; ruff reports 2 import-order errors; последний CI остановился на lint, test job пропущен; `mypy --no-incremental` даёт 74 ошибки.
-- Correctness/security: **не закрыт** — search cache коллидирует по времени/capability, Telegram auth fail-open при пустом allowlist, scene tokens не user-scoped.
-- Data access: **не закрыт** — CDSE provider hard-codes deprecated STAC endpoint/legacy collection names и теряет asset/auth/sidecar metadata.
-- Scientific: **не закрыт** — benchmark, labels, calibration and uncertainty отсутствуют.
+PR #29 слит как `dc3833011be8584737b047c6c322fbe8ceda5032`. Временная write-capable merge orchestration удалена отдельным PR #32; актуальный cleanup commit — `b128873d6e443cedc7628312babae12323fb9d62`.
 
-Подробности и приоритеты: [`AUDIT_2026-07-10.md`](AUDIT_2026-07-10.md), [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+GitHub Actions CI run 701 для cleanup head завершён успешно на том же runtime tree:
+
+- shell syntax — passed;
+- `ruff` — passed;
+- `pytest` — **189 passed**;
+- raw mypy — 145 ошибок против 145 на baseline; no-growth gate passed;
+- package build — passed, sdist и wheel созданы;
+- core `runtime_check.py` — passed.
+
+Этот срез не включает deploy на `us-vmpico`, post-switch Telegram healthcheck и live provider canary. Поэтому offline engineering gate зелёный, но server/deployment и data-access gates остаются открыты. Научный gate открыт, кроме уже зафиксированных fail-safe semantics.
+
+Следующий один приоритет: обновить и довести до зелёного состояния существующий PR #30 с transactional Telegram user state, не создавая дубликат.
