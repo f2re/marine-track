@@ -6,8 +6,14 @@ from pathlib import Path
 from telegram import Message, Update
 from telegram.ext import ContextTypes
 
-from marine_track.detection_pipeline import DetectionRunResult, run_detection_for_token
+from marine_track.bounded_detection import (
+    DetectionProcessError,
+    DetectionTimeoutError,
+    run_detection_in_subprocess,
+)
+from marine_track.detection_pipeline import DetectionRunResult
 from marine_track.detection_scene_search import search_detection_capable_scenes
+from marine_track.provider_canary import build_canary_aoi
 from marine_track.scene_materializer import MaterializationError
 from marine_track.telegram_config import TelegramBotConfig
 from marine_track.telegram_scene_browser import (
@@ -66,6 +72,16 @@ def make_progress_callback(loop: asyncio.AbstractEventLoop, status: Message):
     return callback
 
 
+def compact_default_detection_aoi(config: TelegramBotConfig):
+    side_km = float(config.default_detection_side_km)
+    return build_canary_aoi(
+        base_dir=Path("."),
+        default_aoi=config.default_aoi,
+        side_km=side_km,
+        max_area_km2=min(625.0, side_km * side_km * 1.05),
+    )
+
+
 async def detect_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -101,21 +117,32 @@ async def detect_default_aoi(
             reply_markup=menu_for_user(update, config),
         )
         return
+    try:
+        compact_aoi = await asyncio.to_thread(compact_default_detection_aoi, config)
+        aoi_geojson = compact_aoi.payload
+        aoi_path = write_temp_aoi(aoi_geojson)
+    except Exception as exc:
+        await target.reply_text(
+            f"Не удалось подготовить безопасный сектор AOI: {exc}",
+            reply_markup=menu_for_user(update, config),
+        )
+        return
+
     hours = config.default_lookback_hours
     sensor = config.default_sensor
-    aoi_geojson = read_geojson(config.default_aoi)
     start, end = utc_window(hours)
     search_dir = run_dir(config.output_dir, "detect_default")
     status = await target.reply_text(
         progress_text(
-            "1/5 search · свежая сцена по default AOI",
-            f"sensor={sensor.value}, период={hours} ч",
+            "1/5 search · свежая сцена по bounded AOI",
+            f"sensor={sensor.value}, период={hours} ч, "
+            f"sector={compact_aoi.area_km2:.1f} km²",
         )
     )
     try:
         result = await asyncio.to_thread(
             search_detection_capable_scenes,
-            config.default_aoi,
+            aoi_path,
             start,
             end,
             sensor,
@@ -132,10 +159,13 @@ async def detect_default_aoi(
             owner_user_id=effective_user_id(update),
             owner_chat_id=effective_chat_id(update),
             aoi_geojson=aoi_geojson,
+            search_hours=hours,
         )
     except Exception as exc:
         await status.edit_text(f"Не удалось найти сцену для candidate detection: {exc}")
         return
+    finally:
+        aoi_path.unlink(missing_ok=True)
     if not tokens:
         await status.edit_text("Нет сцен с GeoTIFF/COG assets для candidate detection.")
         return
@@ -145,7 +175,8 @@ async def detect_default_aoi(
         progress_text(
             "1/5 search · сцена выбрана",
             f"provider={result.provider}\nsensor={result.sensor.value}\n"
-            f"search_cache={cache_status}\ntime={scene.acquisition_time.isoformat()}",
+            f"search_cache={cache_status}\ntime={scene.acquisition_time.isoformat()}\n"
+            f"aoi={compact_aoi.area_km2:.1f} km² (bounded)",
         )
     )
     await send_detection_by_token(update, tokens[0], config)
@@ -215,6 +246,7 @@ async def detect_bbox_command(
             owner_user_id=effective_user_id(update),
             owner_chat_id=effective_chat_id(update),
             aoi_geojson=aoi_geojson,
+            search_hours=hours,
         )
     except Exception as exc:
         await status.edit_text(f"Ошибка поиска detection-capable сцен: {exc}")
@@ -277,7 +309,7 @@ async def send_detection_by_token(
     loop = asyncio.get_running_loop()
     try:
         result = await asyncio.to_thread(
-            run_detection_for_token,
+            run_detection_in_subprocess,
             token=token,
             output_dir=config.output_dir,
             owner_user_id=effective_user_id(update),
@@ -285,14 +317,29 @@ async def send_detection_by_token(
             max_crops=config.detection_max_crops,
             land_mask_geojson=config.land_mask_geojson,
             shoreline_buffer_m=config.shoreline_buffer_m,
+            timeout_s=float(config.detection_job_timeout_s),
             progress_callback=make_progress_callback(loop, status),
         )
+    except DetectionTimeoutError as exc:
+        await status.edit_text(
+            "Обработка остановлена по безопасному лимиту времени; зависший worker завершён.\n"
+            f"Причина: {exc}\n"
+            "Уменьшите AOI или повторите позже.",
+            reply_markup=menu_for_user(update, config),
+        )
+        return
     except MaterializationError as exc:
         await status.edit_text(
-            "Обработка не запущена: нет full-resolution GeoTIFF/COG asset.\n"
+            "Обработка не запущена: нет доступного full-resolution GeoTIFF/COG asset.\n"
             f"Причина: {exc}\n\n"
-            "Для ASF ZIP/GRD и preview-only сцен это ожидаемо. "
-            "Используйте /detectbbox или кнопку 🔎 Найти кандидаты.",
+            "Бесплатный Planetary Computer используется без пользовательского токена. "
+            "CDSE/Sentinel Hub подключаются только при явно настроенных credentials.",
+            reply_markup=menu_for_user(update, config),
+        )
+        return
+    except DetectionProcessError as exc:
+        await status.edit_text(
+            f"Ошибка изолированного candidate detection worker: {exc}",
             reply_markup=menu_for_user(update, config),
         )
         return
