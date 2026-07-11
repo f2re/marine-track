@@ -20,6 +20,7 @@ from marine_track.data_sources import (
     default_stac_providers,
 )
 from marine_track.models import Scene, Sensor
+from marine_track.provider_auth import sentinelhub_credentials_configured
 from marine_track.resource_limits import validate_aoi_path
 
 
@@ -38,7 +39,9 @@ def parse_utc_datetime(value: str) -> datetime:
 
 
 def build_source_manager() -> SourceManager:
-    providers = [ASFProvider(), *default_stac_providers(), SentinelHubProvider()]
+    providers = [ASFProvider(), *default_stac_providers()]
+    if sentinelhub_credentials_configured():
+        providers.append(SentinelHubProvider())
     return SourceManager(providers)
 
 
@@ -84,7 +87,7 @@ def search_scenes_with_fallback(
         except Exception as exc:  # noqa: BLE001 - auto mode must try next sensor
             errors.append(f"{concrete_sensor.value}: {exc}")
 
-    raise RuntimeError("No scenes found. " + "; ".join(errors))
+    raise RuntimeError("No scenes found from configured public/authorized providers. " + "; ".join(errors))
 
 
 def run_search_stage(
