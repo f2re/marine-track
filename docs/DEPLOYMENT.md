@@ -49,7 +49,8 @@ Each attempt uses an immutable directory named `<code-version>-<UTC timestamp>`;
 the same commit never collides with a failed earlier attempt. `release.json` records non-secret
 release metadata, while `release.env` supplies `MARINE_TRACK_CODE_VERSION` and
 `MARINE_TRACK_RELEASE_ID` to systemd after the shared environment file. Inactive failed attempts are
-kept only until normal release retention removes them.
+kept only until normal release retention removes them. Operators can correlate a failed attempt with
+journal output by its release id without exposing credentials.
 
 Use the health command independently:
 
