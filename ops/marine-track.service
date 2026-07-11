@@ -10,6 +10,7 @@ User=marine-track
 Group=marine-track
 Environment=MARINE_TRACK_ENV_FILE=/etc/marine-track/marine-track.env
 EnvironmentFile=/etc/marine-track/marine-track.env
+EnvironmentFile=-/opt/marine_track/current/release.env
 WorkingDirectory=/opt/marine_track/current
 ExecStartPre=/opt/marine_track/current/.venv/bin/python /opt/marine_track/current/runtime_check.py
 ExecStart=/opt/marine_track/current/.venv/bin/marine-track-bot

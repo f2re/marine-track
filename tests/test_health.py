@@ -79,3 +79,30 @@ def test_fail_closed_access_policy_is_health_failure(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "")
     report = collect_health(base_dir=tmp_path)
     assert report.status == "failed"
+
+
+
+def test_health_report_exposes_release_identity(monkeypatch, tmp_path):
+    from marine_track.health import collect_health
+
+    base = tmp_path / "release"
+    (base / "config").mkdir(parents=True)
+    (base / "data" / "aoi").mkdir(parents=True)
+    (base / "config" / "processing.yaml").write_text(
+        "ship_detection:\n  sar:\n    threshold_sigma: 3.5\n    min_area_px: 2\n    max_area_px: 5000\n    local_window_px: 31\n    guard_window_px: 5\n  optical:\n    threshold_sigma: 3.5\n    min_area_px: 2\n    max_area_px: 3000\n    local_window_px: 31\n    guard_window_px: 5\n",
+        encoding="utf-8",
+    )
+    (base / "data" / "aoi" / "example_black_sea.geojson").write_text(
+        '{"type":"Polygon","coordinates":[[[30,43],[30.1,43],[30.1,43.1],[30,43.1],[30,43]]]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MARINE_TRACK_CODE_VERSION", "abc123")
+    monkeypatch.setenv("MARINE_TRACK_RELEASE_ID", "abc123-20260710T120000Z")
+    monkeypatch.setenv("MARINE_TRACK_OUTPUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setenv("MARINE_TRACK_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test")
+    report = collect_health(base_dir=base)
+    assert report.code_version == "abc123"
+    assert report.release_id == "abc123-20260710T120000Z"
+    assert report.to_dict()["release_id"] == "abc123-20260710T120000Z"
