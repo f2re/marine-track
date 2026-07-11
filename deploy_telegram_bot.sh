@@ -54,6 +54,62 @@ load_env_file() {
   done < "$path"
 }
 
+env_is_set() {
+  local name="$1"
+  [[ -n "${!name:-}" ]]
+}
+
+validate_optional_provider_credentials() {
+  if ! env_is_set SENTINELHUB_ACCESS_TOKEN && ! env_is_set SH_ACCESS_TOKEN; then
+    if { env_is_set SENTINELHUB_CLIENT_ID && ! env_is_set SENTINELHUB_CLIENT_SECRET; } || \
+       { ! env_is_set SENTINELHUB_CLIENT_ID && env_is_set SENTINELHUB_CLIENT_SECRET; }; then
+      fail "Sentinel Hub OAuth is incomplete: set both client id and client secret, or leave both empty"
+    fi
+    if { env_is_set SH_CLIENT_ID && ! env_is_set SH_CLIENT_SECRET; } || \
+       { ! env_is_set SH_CLIENT_ID && env_is_set SH_CLIENT_SECRET; }; then
+      fail "Sentinel Hub SH_* OAuth aliases are incomplete: set both values, or leave both empty"
+    fi
+  fi
+
+  if ! env_is_set CDSE_ACCESS_TOKEN; then
+    if { env_is_set CDSE_USERNAME && ! env_is_set CDSE_PASSWORD; } || \
+       { ! env_is_set CDSE_USERNAME && env_is_set CDSE_PASSWORD; }; then
+      fail "CDSE password OAuth is incomplete: set both username and password, or leave both empty"
+    fi
+    if env_is_set CDSE_CLIENT_SECRET && ! env_is_set CDSE_CLIENT_ID; then
+      fail "CDSE client secret is set without a client id"
+    fi
+  fi
+}
+
+log_provider_access() {
+  local profile="$1"
+  case "$profile" in
+    all|scene)
+      log "scene access: tokenless Planetary Computer fallback enabled (runtime signing; no operator token)"
+      ;;
+    core|aux)
+      log "scene access: provider profile '$profile' does not install Planetary Computer; candidate detection is unavailable"
+      ;;
+  esac
+
+  if env_is_set SENTINELHUB_ACCESS_TOKEN || env_is_set SH_ACCESS_TOKEN || \
+     { env_is_set SENTINELHUB_CLIENT_ID && env_is_set SENTINELHUB_CLIENT_SECRET; } || \
+     { env_is_set SH_CLIENT_ID && env_is_set SH_CLIENT_SECRET; }; then
+    log "Sentinel Hub OAuth: enabled"
+  else
+    log "Sentinel Hub OAuth: disabled (optional)"
+  fi
+
+  if env_is_set CDSE_ACCESS_TOKEN || \
+     { env_is_set CDSE_USERNAME && env_is_set CDSE_PASSWORD; } || \
+     { env_is_set CDSE_CLIENT_ID && env_is_set CDSE_CLIENT_SECRET; }; then
+    log "CDSE raster OAuth: enabled"
+  else
+    log "CDSE raster OAuth: disabled (optional)"
+  fi
+}
+
 sync_environment() {
   [[ -f "$ENV_TEMPLATE" ]] || fail "environment template not found: $ENV_TEMPLATE"
   [[ -f "$ENV_MERGER" ]] || fail "environment merger not found: $ENV_MERGER"
@@ -90,6 +146,14 @@ load_env_file "$ENV_FILE"
 export MARINE_TRACK_ENV_FILE="$ENV_FILE"
 
 [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]] || fail "TELEGRAM_BOT_TOKEN is empty in $ENV_FILE"
+
+profile="${MARINE_TRACK_PROVIDER_PROFILE:-all}"
+case "$profile" in
+  all|scene|aux|core) ;;
+  *) fail "invalid MARINE_TRACK_PROVIDER_PROFILE=$profile" ;;
+esac
+validate_optional_provider_credentials
+log_provider_access "$profile"
 
 export MARINE_TRACK_OUTPUT_DIR="${MARINE_TRACK_OUTPUT_DIR:-$STATE_DIR/output}"
 export MARINE_TRACK_CACHE_DIR="${MARINE_TRACK_CACHE_DIR:-$CACHE_DIR}"
@@ -161,13 +225,11 @@ rsync -a --delete \
 
 "$PYTHON_BIN" -m venv "$STAGING/.venv"
 "$STAGING/.venv/bin/python" -m pip install --upgrade pip wheel
-profile="${MARINE_TRACK_PROVIDER_PROFILE:-all}"
 case "$profile" in
   all) package_spec="$STAGING[providers]" ;;
   scene) package_spec="$STAGING[scene-providers]" ;;
   aux) package_spec="$STAGING[aux-providers]" ;;
   core) package_spec="$STAGING" ;;
-  *) fail "invalid MARINE_TRACK_PROVIDER_PROFILE=$profile" ;;
 esac
 "$STAGING/.venv/bin/pip" install "$package_spec"
 
@@ -181,7 +243,8 @@ export MARINE_TRACK_RELEASE_ID="$RELEASE_ID"
   --base-dir "$STAGING" --env-file "$ENV_FILE" --json
 
 RELEASE_CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-"$STAGING/.venv/bin/python" - "$STAGING/release.json" "$STAGING/release.env"   "$RELEASE_ID" "$CODE_VERSION" "$RELEASE_CREATED_AT" "$profile" <<'PY'
+"$STAGING/.venv/bin/python" - "$STAGING/release.json" "$STAGING/release.env" \
+  "$RELEASE_ID" "$CODE_VERSION" "$RELEASE_CREATED_AT" "$profile" <<'PY'
 from __future__ import annotations
 
 import json
