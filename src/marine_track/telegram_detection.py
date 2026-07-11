@@ -13,6 +13,7 @@ from marine_track.bounded_detection import (
 )
 from marine_track.detection_pipeline import DetectionRunResult
 from marine_track.detection_scene_search import search_detection_capable_scenes
+from marine_track.provenance import redact_value
 from marine_track.provider_canary import build_canary_aoi
 from marine_track.scene_materializer import MaterializationError
 from marine_track.telegram_config import TelegramBotConfig
@@ -38,6 +39,10 @@ from marine_track.telegram_user_state import (
 )
 
 DETECT_CALLBACK_PREFIX = "mtdetect"
+
+
+def accessible_message(value: object) -> Message | None:
+    return value if isinstance(value, Message) else None
 
 
 def effective_user_id(update: Update) -> int:
@@ -71,6 +76,10 @@ def make_progress_callback(loop: asyncio.AbstractEventLoop, status: Message):
     return callback
 
 
+def safe_error_text(exc: BaseException, config: TelegramBotConfig) -> str:
+    return str(redact_value(str(exc), base_dir=config.output_dir))[:800]
+
+
 def compact_default_detection_aoi(config: TelegramBotConfig):
     side_km = float(config.default_detection_side_km)
     return build_canary_aoi(
@@ -86,8 +95,8 @@ async def detect_command(
     context: ContextTypes.DEFAULT_TYPE,
     config: TelegramBotConfig,
 ) -> None:
-    message = update.effective_message
-    if not message:
+    message = accessible_message(update.effective_message)
+    if message is None:
         return
     args = list(context.args or [])
     if not args:
@@ -105,10 +114,10 @@ async def detect_default_aoi(
     config: TelegramBotConfig,
 ) -> None:
     del context
-    target = update.effective_message or (
-        update.callback_query.message if update.callback_query else None
-    )
-    if not target:
+    target = accessible_message(update.effective_message)
+    if target is None and update.callback_query is not None:
+        target = accessible_message(update.callback_query.message)
+    if target is None:
         return
     if not config.default_aoi.is_file():
         await target.reply_text(
@@ -122,7 +131,7 @@ async def detect_default_aoi(
         aoi_path = write_temp_aoi(aoi_geojson)
     except Exception as exc:
         await target.reply_text(
-            f"Не удалось подготовить безопасный сектор AOI: {exc}",
+            f"Не удалось подготовить безопасный сектор AOI: {safe_error_text(exc, config)}",
             reply_markup=menu_for_user(update, config),
         )
         return
@@ -161,7 +170,10 @@ async def detect_default_aoi(
             search_hours=hours,
         )
     except Exception as exc:
-        await status.edit_text(f"Не удалось найти сцену для candidate detection: {exc}")
+        await status.edit_text(
+            "Не удалось найти сцену для candidate detection: "
+            f"{safe_error_text(exc, config)}"
+        )
         return
     finally:
         aoi_path.unlink(missing_ok=True)
@@ -186,14 +198,14 @@ async def detect_bbox_command(
     context: ContextTypes.DEFAULT_TYPE,
     config: TelegramBotConfig,
 ) -> None:
-    message = update.effective_message
-    if not message:
+    message = accessible_message(update.effective_message)
+    if message is None:
         return
     args = list(context.args or [])
     if len(args) < 5:
         await message.reply_text(
             "Формат: /detectbbox [auto|sentinel1|sentinel2] west south east north [hours]\n"
-            "Пример: /detectbbox sentinel1 36.5 43.8 38.5 45.0 12",
+            "Пример: /detectbbox sentinel1 37.45 44.35 37.55 44.45 72",
             reply_markup=menu_for_user(update, config),
         )
         return
@@ -214,7 +226,10 @@ async def detect_bbox_command(
             hours,
         )
     except ValueError as exc:
-        await message.reply_text(f"Ошибка: {exc}", reply_markup=menu_for_user(update, config))
+        await message.reply_text(
+            f"Ошибка: {safe_error_text(exc, config)}",
+            reply_markup=menu_for_user(update, config),
+        )
         return
 
     start, end = utc_window(hours)
@@ -248,7 +263,9 @@ async def detect_bbox_command(
             search_hours=hours,
         )
     except Exception as exc:
-        await status.edit_text(f"Ошибка поиска detection-capable сцен: {exc}")
+        await status.edit_text(
+            f"Ошибка поиска detection-capable сцен: {safe_error_text(exc, config)}"
+        )
         return
     finally:
         aoi_path.unlink(missing_ok=True)
@@ -289,13 +306,13 @@ async def send_detection_by_token(
     token: str,
     config: TelegramBotConfig,
 ) -> None:
-    target = update.effective_message
+    target = accessible_message(update.effective_message)
     query = update.callback_query
     if query:
         await query.answer()
-    if not target and query:
-        target = query.message
-    if not target:
+    if target is None and query is not None:
+        target = accessible_message(query.message)
+    if target is None:
         return
 
     output_mode = output_mode_for_user(update, config)
@@ -322,7 +339,7 @@ async def send_detection_by_token(
     except DetectionTimeoutError as exc:
         await status.edit_text(
             "Обработка остановлена по безопасному лимиту времени; зависший worker завершён.\n"
-            f"Причина: {exc}\n"
+            f"Причина: {safe_error_text(exc, config)}\n"
             "Уменьшите AOI или повторите позже.",
             reply_markup=menu_for_user(update, config),
         )
@@ -330,7 +347,7 @@ async def send_detection_by_token(
     except MaterializationError as exc:
         await status.edit_text(
             "Обработка не запущена: нет доступного full-resolution GeoTIFF/COG asset.\n"
-            f"Причина: {exc}\n\n"
+            f"Причина: {safe_error_text(exc, config)}\n\n"
             "Бесплатный Planetary Computer используется без пользовательского токена. "
             "CDSE/Sentinel Hub подключаются только при явно настроенных credentials.",
             reply_markup=menu_for_user(update, config),
@@ -338,13 +355,14 @@ async def send_detection_by_token(
         return
     except DetectionProcessError as exc:
         await status.edit_text(
-            f"Ошибка изолированного candidate detection worker: {exc}",
+            "Ошибка изолированного candidate detection worker: "
+            f"{safe_error_text(exc, config)}",
             reply_markup=menu_for_user(update, config),
         )
         return
     except Exception as exc:
         await status.edit_text(
-            f"Ошибка candidate detection: {exc}",
+            f"Ошибка candidate detection: {safe_error_text(exc, config)}",
             reply_markup=menu_for_user(update, config),
         )
         return
@@ -386,7 +404,7 @@ def summary_text(result: DetectionRunResult, output_mode: str = OUTPUT_MODE_ALL)
 
 
 async def send_detection_outputs(
-    target,
+    target: Message,
     result: DetectionRunResult,
     output_mode: str = OUTPUT_MODE_ALL,
 ) -> None:
@@ -399,7 +417,7 @@ async def send_detection_outputs(
             await send_document(target, path)
 
 
-async def send_photo_or_document(target, path: Path, caption: str) -> None:
+async def send_photo_or_document(target: Message, path: Path, caption: str) -> None:
     suffix = path.suffix.lower()
     if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
         with path.open("rb") as file_obj:
@@ -408,6 +426,6 @@ async def send_photo_or_document(target, path: Path, caption: str) -> None:
         await send_document(target, path, caption=caption)
 
 
-async def send_document(target, path: Path, caption: str | None = None) -> None:
+async def send_document(target: Message, path: Path, caption: str | None = None) -> None:
     with path.open("rb") as file_obj:
         await target.reply_document(document=file_obj, caption=caption)
