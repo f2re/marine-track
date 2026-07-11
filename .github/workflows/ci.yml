@@ -64,7 +64,7 @@ jobs:
           test "$(cat pytest.exit)" = "0"
 
   finalize-operational-s1:
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/operational-s1-preprocessing-20260710'
+    if: (github.event_name == 'pull_request' && github.head_ref == 'agent/operational-s1-preprocessing-20260710') || (github.event_name == 'push' && github.ref_name == 'agent/operational-s1-preprocessing-20260710')
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
