@@ -21,7 +21,7 @@ AOI + UTC interval
 
 ## Срез состояния на 2026-07-11
 
-### Реализовано в `main`
+### Реализовано в release candidate
 
 - [x] Typed `SceneAsset`, capability-aware selection и authenticated/transient asset access.
 - [x] Hardened scene-search cache с absolute time/capability contract и deterministic ordering.
@@ -41,19 +41,20 @@ AOI + UTC interval
 - [x] Normal Telegram candidate detection выполняется в killable subprocess с hard wall-clock timeout.
 - [x] Default detection AOI ограничен compact sector; oversized bbox отклоняется до expensive I/O.
 - [x] Deploy/runtime preflight объясняет enabled/disabled provider access без вывода secrets.
-- [x] Временная write-capable PR-finalization orchestration удалена после merge.
+- [x] Transactional Telegram user state: complete read-modify-write `flock`, same-directory temp, file/directory `fsync`, `os.replace`, mode 0600 и exactly one trailing newline.
+- [x] Corrupt active user state сохраняется в private quarantine; legacy schema читается и обновляется; unknown future schema fail-closed.
+- [x] Separate redacted user-state health и multi-process lost-update regression test.
+- [x] Временные write-capable PR-finalization workflows/scripts отсутствуют в итоговых diffs.
 
-PR #29 слит в `main` как `dc3833011be8584737b047c6c322fbe8ceda5032`; cleanup PR #32 — `b128873d6e443cedc7628312babae12323fb9d62`. CI run 701: shell/ruff/189 tests/build/core runtime/no-growth mypy gate passed.
+Provider canary и bounded detection вошли через PR #29; cleanup orchestration удалена PR #32. PR #30 обновлён от актуального `main` и содержит только runtime/tests/docs изменения transactional state.
 
-### Отдельный открытый PR #30
-
-- [ ] Transactional Telegram user state: inter-process lock, read-modify-write transaction, temp+`fsync`+`os.replace`, mode 0600, corrupt JSON quarantine и parallel lost-update test.
-- [ ] PR #30 остаётся draft и основан на более старом `main`; перед продолжением его нужно обновить после слияния PR #29, устранить временный finalize workflow и повторить полный release gate.
+Полный offline gate implementation head PR #30: shell/ruff/**200 tests**/build/core runtime/no-growth mypy passed; raw mypy остаётся 145 ошибок против 145 на baseline.
 
 ### Не подтверждено
 
 - [ ] Clean install и atomic deploy на `us-vmpico` после обновления `main`.
 - [ ] Post-switch Telegram healthcheck и rollback на реальном systemd service.
+- [ ] Сохранение и migration реального `telegram_user_state.json` при target-host deploy подтверждены оператором.
 - [ ] Live Planetary Computer search/sign/range-read canary.
 - [ ] Live detection canary с отдельным operator confirmation.
 - [ ] Независимый benchmark, calibration split и uncertainty.
@@ -70,28 +71,36 @@ PR #29 слит в `main` как `dc3833011be8584737b047c6c322fbe8ceda5032`; cle
 | Bounded AOI до raster I/O | compact default sector и detection area ceiling | provider-not-called oversized AOI test | README, release gate | закрыто offline |
 | Canary не запускается автоматически | explicit CLI/Telegram action, separate detection confirm | mocked canary/selftest tests | `PROVIDER_CANARY.md` | закрыто offline |
 | Sanitized report/errors | centralized redaction, atomic 0600 report | secret/path/query redaction tests | provider canary doc | закрыто offline |
-| Telegram mutable state transactional | PR #30 | pending parallel/recovery gate | draft state doc | открыто |
+| Telegram mutable state transactional | `telegram_user_state.py` transaction/lock/quarantine/schema contract | multi-process, recovery, permission и health tests | `TELEGRAM_USER_STATE.md` | закрыто offline |
 | Live provider/data access | explicit asset canary | не запускался | release gate | открыто |
 | Научная точность | dataset/evaluation/calibration workflow | benchmark отсутствует | technical spec/catalog | открыто |
 
-## P0 — завершение server engineering gate
+## P0 — завершение target-host engineering gate
 
-### P0.1. Deployment нового `main`
+### P0.1. Deployment актуального `main`
 
-1. Обновить server checkout fast-forward от `origin/main`.
+1. Обновить server checkout fast-forward от `origin/main`; зафиксировать до/после SHA.
 2. Запустить `deploy_telegram_bot.sh`; зафиксировать release id/code SHA.
 3. Проверить `systemctl is-active`, runtime/health output и сохранение canonical env/state/cache/output.
-4. Проверить `/start`, `/status`, `/dates` и bounded `/detectbbox`.
-5. Не запускать live canary автоматически. Asset canary выполнить отдельно только с явным разрешением на сетевой доступ.
+4. Проверить, что существующий `telegram_user_state.json` не потерян, имеет mode 0600 после доступа/mutation и health не раскрывает user content/path.
+5. Проверить `/start`, `/status`, `/dates` и bounded `/detectbbox`.
+6. Смоделировать безопасный post-switch failure только контролируемым способом и подтвердить rollback, не повреждая production state.
+7. Не запускать live canary автоматически.
 
-### P0.2. Продолжение существующего PR #30
+### P0.2. Explicit asset-only provider canary
 
-1. Перебазировать/обновить branch от нового `main` без создания нового PR.
-2. Удалить temporary self-finalization workflow/script из итогового diff.
-3. Проверить flock transaction на полном read-modify-write участке.
-4. Проверить same-directory temporary, `fsync` файла и директории, `os.replace`, mode 0600.
-5. Проверить corrupt active JSON quarantine и deterministic recovery.
-6. Добавить multi-process lost-update test и полный mandatory gate.
+После успешного deploy и только по явному разрешению:
+
+```text
+compact AOI
+→ Sentinel-1 search
+→ typed processable asset
+→ transient Planetary Computer signing
+→ bounded TIFF range-read
+→ redacted mode-0600 report
+```
+
+Не запускать detection mode до отдельного подтверждения. Live success подтверждает integration/data access, а не научную точность или гарантированное наличие `vessel_candidate`.
 
 ### P0.3. Контролируемый typing/packaging baseline
 
@@ -103,34 +112,19 @@ PR #29 слит в `main` как `dc3833011be8584737b047c6c322fbe8ceda5032`; cle
 
 ## P1 — эксплуатационная проверяемость после server gate
 
-### P1.1. Provider canary
-
-Asset mode:
-
-```text
-compact AOI → Sentinel-1 search → typed asset → transient signing/OAuth → TIFF range-read
-```
-
-Detection mode:
-
-```text
-separate confirmation → compact AOI → one scoped scene → materialize/preprocess/detect
-```
-
-Ограничения:
-
-- не запускать при deploy/restart/обычном healthcheck;
-- wake/Kelvin всегда выключены;
-- report atomic, mode 0600 и redacted;
-- отсутствие processable asset — typed failure, не «0 кандидатов»;
-- live success подтверждает только integration/data access, не научную точность.
-
-### P1.2. Operations evidence
+### P1.1. Provider/runtime evidence
 
 - Сохранять latency по stages, provider success/failure class, bytes checked/downloaded и cache hit.
 - Проверять expired signing/OAuth и повторный запуск.
 - Проверять сохранение `.env`, state, cache и outputs при deploy/rollback.
 - Не логировать credentials, signed query, local absolute paths или user content.
+- Проверять recovery после corrupt state только на копии/fixture, не повреждая production state.
+
+### P1.2. State retention and operations
+
+- Зафиксировать retention/quarantine cleanup policy для historical corrupt snapshots.
+- Проверить concurrent callbacks на целевом filesystem, включая restart во время queued updates.
+- Сохранять unknown future schema fail-closed: старый release не должен перезаписывать state после rollback с более новой schema.
 
 ## P2 — научная валидация после engineering/data-access gate
 
