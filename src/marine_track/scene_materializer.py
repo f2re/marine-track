@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
-from contextlib import nullcontext
+import threading
+import time
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -24,7 +27,7 @@ PREVIEW_KEY_HINTS = (
     "overview",
     "rendered_preview",
 )
-S1_PRIORITY_HINTS = ("vv", "sigma0_vv", "gamma0_vv", "rtc", "vh", "sigma0_vh")
+S1_PRIORITY_HINTS = ("gamma0_vv", "sigma0_vv", "rtc", "vv", "gamma0_vh", "sigma0_vh", "vh")
 S2_PRIORITY_HINTS = ("b08", "b04", "b03", "b02", "visual", "true_color")
 GENERIC_PRIORITY_HINTS = ("cog", "geotiff", "tif", "data", "analytic", "asset")
 TIFF_MEDIA_HINTS = ("image/tiff", "geotiff", "cloud-optimized")
@@ -252,33 +255,97 @@ def materialize_asset(
         raise MaterializationError(f"Archive assets are not supported yet: {safe_url(href)}")
     if suffix not in RASTER_EXTENSIONS and not href.startswith(("http://", "https://")):
         raise MaterializationError(f"Asset is not a GeoTIFF/COG: {safe_url(href)}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_file() and target.stat().st_size > 0:
-        probe = probe_raster_asset(str(target))
-        touch_cache_file(target)
-        result = (target, aoi_geojson is not None, True)
-        return (*result, probe) if return_probe else result
 
-    probe = probe_raster_asset(href, headers=headers)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.unlink(missing_ok=True)
-    if aoi_geojson is not None:
-        crop_raster_to_aoi(href, tmp, aoi_geojson, headers=headers)
-        tmp.replace(target)
-        result = (target, True, False)
-        return (*result, probe) if return_probe else result
-    if href.startswith(("http://", "https://")):
-        download_url(href, tmp, headers=headers)
-        tmp.replace(target)
-        result = (target, False, False)
-        return (*result, probe) if return_probe else result
-    source = Path(href)
-    if source.is_file():
-        tmp.write_bytes(source.read_bytes())
-        tmp.replace(target)
-        result = (target, False, False)
-        return (*result, probe) if return_probe else result
-    raise MaterializationError(f"Asset path is not readable: {safe_url(href)}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with materialization_lock(target):
+        if target.is_file() and target.stat().st_size > 0:
+            try:
+                probe = probe_raster_asset(str(target))
+            except MaterializationError:
+                # A previous process/version may have left a corrupt non-empty cache file.
+                # Under the lock it is safe to remove and rebuild it once.
+                target.unlink(missing_ok=True)
+            else:
+                touch_cache_file(target)
+                result = (target, aoi_geojson is not None, True)
+                return (*result, probe) if return_probe else result
+
+        source_probe = probe_raster_asset(href, headers=headers)
+        tmp = target.with_name(
+            f".{target.name}.tmp-{os.getpid()}-{threading.get_ident()}"
+        )
+        tmp.unlink(missing_ok=True)
+        try:
+            if aoi_geojson is not None:
+                crop_raster_to_aoi(href, tmp, aoi_geojson, headers=headers)
+                cropped = True
+            elif href.startswith(("http://", "https://")):
+                download_url(href, tmp, headers=headers)
+                cropped = False
+            else:
+                source = Path(href)
+                if not source.is_file():
+                    raise MaterializationError(
+                        f"Asset path is not readable: {safe_url(href)}"
+                    )
+                tmp.write_bytes(source.read_bytes())
+                cropped = False
+
+            probe_raster_asset(str(tmp))
+            tmp.replace(target)
+            touch_cache_file(target)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+        result = (target, cropped, False)
+        return (*result, source_probe) if return_probe else result
+
+
+@contextmanager
+def materialization_lock(target: Path, timeout_s: float | None = None):
+    """Serialize creation of one cache target across workers and processes."""
+
+    try:
+        import fcntl
+    except ImportError as exc:  # pragma: no cover - production target is Linux
+        raise MaterializationError("fcntl is required for raster cache locking") from exc
+
+    if timeout_s is None:
+        raw = os.getenv("MARINE_TRACK_RASTER_LOCK_TIMEOUT_S", "300").strip()
+        try:
+            timeout_s = float(raw)
+        except ValueError as exc:
+            raise MaterializationError(
+                f"MARINE_TRACK_RASTER_LOCK_TIMEOUT_S must be numeric, got {raw!r}"
+            ) from exc
+    if not math.isfinite(timeout_s) or timeout_s <= 0:
+        raise MaterializationError("raster cache lock timeout must be finite and positive")
+
+    lock_path = target.with_suffix(target.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        try:
+            os.chmod(lock_path, 0o600)
+            os.utime(lock_path, None)
+        except OSError:
+            pass
+        deadline = time.monotonic() + timeout_s
+        while True:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with suppress(OSError):
+                    os.utime(lock_path, None)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise MaterializationError(
+                        f"Timed out waiting for raster cache lock: {target.name}"
+                    ) from exc
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def probe_raster_asset(
@@ -342,10 +409,11 @@ def crop_raster_to_aoi(
     headers: dict[str, str] | None = None,
 ) -> None:
     try:
+        import numpy as np
         import rasterio
         from rasterio.mask import mask
     except ImportError as exc:  # pragma: no cover - environment dependent
-        raise MaterializationError("rasterio is required for AOI crop") from exc
+        raise MaterializationError("rasterio and numpy are required for AOI crop") from exc
 
     header_value = _gdal_header_value(headers)
     context = rasterio.Env(GDAL_HTTP_HEADERS=header_value) if header_value else nullcontext()
@@ -354,21 +422,47 @@ def crop_raster_to_aoi(
             geometries = extract_geometries(aoi_geojson, target_crs=dataset.crs)
             if not geometries:
                 raise MaterializationError("AOI GeoJSON does not contain geometries")
-            data, transform = mask(dataset, geometries, crop=True, filled=True)
+            data, transform = mask(dataset, geometries, crop=True, filled=False)
+            mask_array = np.ma.getmaskarray(data)
+            valid_mask = ~np.any(mask_array, axis=0)
+            filled_data = np.asarray(data.astype("float32").filled(np.nan), dtype="float32")
+            if not valid_mask.any():
+                raise MaterializationError("AOI crop contains no valid source pixels")
+
             profile = dataset.profile.copy()
             profile.update(
                 driver="GTiff",
-                height=data.shape[1],
-                width=data.shape[2],
+                dtype="float32",
+                nodata=np.nan,
+                height=filled_data.shape[1],
+                width=filled_data.shape[2],
                 transform=transform,
-                count=data.shape[0],
+                count=filled_data.shape[0],
                 compress="deflate",
             )
             profile.pop("blockxsize", None)
             profile.pop("blockysize", None)
             profile.pop("tiled", None)
+            dataset_tags = dataset.tags()
+            band_tags = [dataset.tags(index) for index in range(1, dataset.count + 1)]
+            descriptions = tuple(dataset.descriptions)
+            scales = tuple(dataset.scales)
+            offsets = tuple(dataset.offsets)
+
             with rasterio.open(target, "w", **profile) as output:
-                output.write(data)
+                output.write(filled_data)
+                output.write_mask(valid_mask.astype("uint8") * 255)
+                if dataset_tags:
+                    output.update_tags(**dataset_tags)
+                for index, tags in enumerate(band_tags, start=1):
+                    if tags:
+                        output.update_tags(index, **tags)
+                try:
+                    output.descriptions = descriptions
+                    output.scales = scales
+                    output.offsets = offsets
+                except (AttributeError, TypeError, ValueError):
+                    pass
     except MaterializationError:
         raise
     except Exception as exc:

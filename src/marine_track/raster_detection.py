@@ -21,6 +21,11 @@ from marine_track.resource_limits import (
     ResourceLimits,
     validate_raster_workload,
 )
+from marine_track.sensor_preprocessing import (
+    SensorPreprocessingPlan,
+    build_local_preprocessing_plan,
+    read_preprocessed_band,
+)
 
 NORMALIZATION_LOW_PERCENTILE = 2.0
 NORMALIZATION_HIGH_PERCENTILE = 98.0
@@ -45,6 +50,7 @@ def detect_candidates_from_raster(
     max_raster_pixels: int = 2_000_000_000,
     max_tiles: int = 20_000,
     max_candidates: int = 10_000,
+    preprocessing_plan: SensorPreprocessingPlan | None = None,
     land_mask_geojson: str | Path | None = None,
     shoreline_buffer_m: float = 0.0,
     calibration_profile: dict[str, Any] | None = None,
@@ -66,6 +72,11 @@ def detect_candidates_from_raster(
     output_dir = Path(
         phase2_output_dir or os.getenv("MARINE_TRACK_OUTPUT_DIR", "runs/telegram")
     )
+    if preprocessing_plan is None:
+        preprocessing_plan = build_local_preprocessing_plan(
+            satellite,
+            {"speckle_filter": "none"},
+        )
     if calibration_profile is None:
         calibration_profile = load_calibration_profile(output_dir)
     post_filter_threshold, phase2_profile_id = active_post_filter_threshold(output_dir)
@@ -92,6 +103,7 @@ def detect_candidates_from_raster(
         normalization_low, normalization_high, sample_count = _normalization_domain(
             dataset,
             prepared_land,
+            preprocessing_plan,
             max_sample_pixels=normalization_sample_pixels,
         )
         windows = list(
@@ -106,9 +118,12 @@ def detect_candidates_from_raster(
         candidate_tiles: list[dict[str, int]] = []
         for tile_index, (row0, col0, height, width, ownership) in enumerate(windows):
             window = rasterio.windows.Window(col0, row0, width, height)
-            image = dataset.read(1, window=window, out_dtype="float32")
-            if dataset.nodata is not None:
-                image[image == dataset.nodata] = np.nan
+            image = read_preprocessed_band(
+                dataset,
+                preprocessing_plan,
+                window=window,
+                apply_filter=True,
+            )
             image = apply_prepared_land_mask(
                 image,
                 dataset.window_transform(window),
@@ -236,6 +251,7 @@ def detect_candidates_from_raster(
                     "normalization_low_value": normalization_low,
                     "normalization_high_value": normalization_high,
                     "normalization_sample_count": sample_count,
+                    "preprocessing": preprocessing_plan.as_dict(),
                     "land_mask_geojson": str(land_mask_geojson)
                     if land_mask_geojson
                     else None,
@@ -250,6 +266,7 @@ def detect_candidates_from_raster(
 def _normalization_domain(
     dataset: Any,
     prepared_land: Any,
+    preprocessing_plan: SensorPreprocessingPlan,
     *,
     max_sample_pixels: int,
 ) -> tuple[float, float, int]:
@@ -260,14 +277,13 @@ def _normalization_domain(
     ratio = min(1.0, math.sqrt(max(1, int(max_sample_pixels)) / max(total, 1)))
     sample_width = max(1, min(dataset.width, int(round(dataset.width * ratio))))
     sample_height = max(1, min(dataset.height, int(round(dataset.height * ratio))))
-    sample = dataset.read(
-        1,
+    sample = read_preprocessed_band(
+        dataset,
+        preprocessing_plan,
         out_shape=(sample_height, sample_width),
-        out_dtype="float32",
         resampling=Resampling.nearest,
+        apply_filter=False,
     )
-    if dataset.nodata is not None:
-        sample[sample == dataset.nodata] = np.nan
     sample_transform = dataset.transform * Affine.scale(
         dataset.width / sample_width,
         dataset.height / sample_height,

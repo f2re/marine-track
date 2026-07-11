@@ -30,6 +30,11 @@ from marine_track.raster_detection import detect_candidates_from_raster
 from marine_track.rendering.overview import render_overview
 from marine_track.rendering.vessel_crop import render_vessel_crop
 from marine_track.scene_materializer import MaterializedScene, materialize_scene_from_token
+from marine_track.sensor_preprocessing import (
+    SensorPreprocessingPlan,
+    build_scene_preprocessing_plan,
+    wake_research_enabled,
+)
 from marine_track.wake import associate_wake_axis_with_vessel, estimate_wake_wavelength_px
 
 ProgressCallback = Callable[[str], None]
@@ -47,6 +52,8 @@ class DetectionRunResult:
     parquet: Path
     report_json: Path
     runtime_state_json: Path
+    preprocessing_plan: SensorPreprocessingPlan
+    wake_research_enabled: bool
 
 
 def report_progress(callback: ProgressCallback | None, text: str) -> None:
@@ -99,7 +106,6 @@ def run_detection_for_token(
         owner_user_id=owner_user_id,
         owner_chat_id=owner_chat_id,
     )
-    runtime_state_json = write_runtime_state(run_dir / "runtime_state.json", materialized)
     effective_config = load_effective_detector_config(
         materialized.scene.sensor,
         threshold_sigma=threshold_sigma,
@@ -109,9 +115,22 @@ def run_detection_for_token(
         guard_window_px=guard_window_px,
         min_contrast_sigma=min_contrast_sigma,
     )
+    preprocessing_plan = build_scene_preprocessing_plan(
+        materialized,
+        effective_config.preprocessing,
+    )
+    runtime_state_json = write_runtime_state(
+        run_dir / "runtime_state.json",
+        materialized,
+        preprocessing_plan,
+    )
     detector_kwargs = effective_config.detector_kwargs()
 
-    report_progress(progress_callback, "3/5 detect · CFAR, scale, shape, wake/AIS reference")
+    wake_enabled = wake_research_enabled()
+    report_progress(
+        progress_callback,
+        "3/5 detect · preprocessing, CFAR, scale, shape, AIS reference",
+    )
     detections = detect_candidates_from_raster(
         path=materialized.raster_path,
         satellite=materialized.scene.sensor.value,
@@ -119,10 +138,12 @@ def run_detection_for_token(
         product_id=materialized.scene.product_id,
         acquisition_time=materialized.scene.acquisition_time,
         **detector_kwargs,
+        preprocessing_plan=preprocessing_plan,
         land_mask_geojson=land_mask_geojson,
         shoreline_buffer_m=shoreline_buffer_m,
     )
-    enrich_detections_with_wakes(materialized.raster_path, detections)
+    if wake_enabled:
+        enrich_detections_with_wakes(materialized.raster_path, detections)
     enrich_detections_with_ais(detections)
 
     report_progress(progress_callback, "4/5 render · обзор кандидатов, crop и файлы")
@@ -146,6 +167,8 @@ def run_detection_for_token(
         effective_config=effective_config,
         land_mask_geojson=land_mask_geojson,
         shoreline_buffer_m=shoreline_buffer_m,
+        preprocessing_plan=preprocessing_plan,
+        wake_enabled=wake_enabled,
     )
     return DetectionRunResult(
         token=token,
@@ -158,20 +181,27 @@ def run_detection_for_token(
         parquet=parquet,
         report_json=report_json,
         runtime_state_json=runtime_state_json,
+        preprocessing_plan=preprocessing_plan,
+        wake_research_enabled=wake_enabled,
     )
 
 
-def write_runtime_state(path: Path, materialized: MaterializedScene) -> Path:
+def write_runtime_state(
+    path: Path,
+    materialized: MaterializedScene,
+    preprocessing_plan: SensorPreprocessingPlan,
+) -> Path:
     """Write local-only state needed by calibration without exposing it in reports."""
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "token": materialized.token,
         "raster_path": str(materialized.raster_path.resolve()),
         "work_dir": str(materialized.work_dir.resolve()),
         "provider": materialized.provider,
         "sensor": materialized.sensor,
         "product_id": materialized.scene.product_id,
+        "preprocessing": preprocessing_plan.as_dict(),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -467,6 +497,8 @@ def write_report_json(
     effective_config: EffectiveDetectorConfig,
     land_mask_geojson: str | Path | None,
     shoreline_buffer_m: float,
+    preprocessing_plan: SensorPreprocessingPlan,
+    wake_enabled: bool,
 ) -> Path:
     output_dir = path.parents[2]
     detector = effective_config.as_report_dict()
@@ -478,7 +510,7 @@ def write_report_json(
         shoreline_buffer_m=shoreline_buffer_m,
     )
     payload = {
-        "schema_version": 3,
+        "schema_version": 4,
         "result_type": "vessel_candidates",
         "result_semantics": {
             "ranking_score": "ordering/filtering score, not probability",
@@ -496,17 +528,32 @@ def write_report_json(
         "runtime_state_reference": safe_path_reference(runtime_state_json, output_dir),
         "raster_cache_hit": materialized.cache_hit,
         "aoi_crop": materialized.cropped,
+        "preprocessing": preprocessing_plan.as_dict(),
+        "collection": preprocessing_plan.collection,
+        "processing_level": preprocessing_plan.processing_level,
+        "polarization": preprocessing_plan.polarization,
+        "band": preprocessing_plan.band,
+        "units": preprocessing_plan.output_units,
         "detector": detector,
         "reproducibility": build_reproducibility_manifest(
             materialized,
             effective_config,
+            preprocessing_plan=preprocessing_plan,
             output_dir=output_dir,
         ),
         "wake_research_proxy": {
-            "enabled": True,
+            "enabled": wake_enabled,
             "experimental": True,
-            "method": "cross_axis_profile_peaks + deep_water_kelvin_wavelength",
-            "note": "Never copied into operational speed.",
+            "method": (
+                "cross_axis_profile_peaks + deep_water_kelvin_wavelength"
+                if wake_enabled
+                else None
+            ),
+            "note": (
+                "Explicit research override; never copied into operational speed."
+                if wake_enabled
+                else "Disabled by default in the operational path."
+            ),
         },
         "ais_reference": {
             "enabled": bool(os.getenv("MARINE_TRACK_AIS_CSV", "").strip()),

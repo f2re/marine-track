@@ -28,17 +28,27 @@ from marine_track.calibration_phase2 import (
     tasks_dir,
     utc_now,
 )
-from marine_track.geospatial import lonlat_to_pixel, pixel_to_lonlat
+from marine_track.geospatial import lonlat_to_pixel, pixel_scale_m, pixel_to_lonlat
 from marine_track.rendering.overview import grayscale_to_bgr
 
 
 def applicability_from_report(report: dict[str, Any], dataset: Any | None = None) -> dict[str, Any]:
     detector = report.get("detector") if isinstance(report.get("detector"), dict) else {}
     source = report.get("source") if isinstance(report.get("source"), dict) else {}
+    sensor_preprocessing = (
+        report.get("preprocessing")
+        if isinstance(report.get("preprocessing"), dict)
+        else {}
+    )
     gsd = None
     if dataset is not None:
         try:
-            gsd = float((abs(dataset.transform.a) + abs(dataset.transform.e)) / 2.0)
+            scale = pixel_scale_m(
+                float(dataset.height) / 2.0,
+                float(dataset.width) / 2.0,
+                _geo_context(dataset),
+            )
+            gsd = scale.mean_m
         except (AttributeError, TypeError, ValueError):
             gsd = None
     gsd_bucket = "unknown"
@@ -53,15 +63,44 @@ def applicability_from_report(report: dict[str, Any], dataset: Any | None = None
             gsd_bucket = "gt40m"
     processing = {
         "sensor": str(report.get("sensor") or "unknown").lower(),
-        "collection": str(report.get("collection") or source.get("collection") or "unknown").lower(),
-        "processing_level": str(
-            report.get("processing_level") or source.get("processing_level") or "unknown"
+        "collection": str(
+            report.get("collection")
+            or sensor_preprocessing.get("collection")
+            or source.get("collection")
+            or "unknown"
         ).lower(),
-        "polarization": str(report.get("polarization") or source.get("polarization") or "unknown").lower(),
-        "band": str(report.get("band") or source.get("band") or "unknown").lower(),
-        "units": str(report.get("units") or source.get("units") or "unknown").lower(),
+        "processing_level": str(
+            report.get("processing_level")
+            or sensor_preprocessing.get("processing_level")
+            or source.get("processing_level")
+            or "unknown"
+        ).lower(),
+        "polarization": str(
+            report.get("polarization")
+            or sensor_preprocessing.get("polarization")
+            or source.get("polarization")
+            or "unknown"
+        ).lower(),
+        "band": str(
+            report.get("band")
+            or sensor_preprocessing.get("band")
+            or source.get("band")
+            or "unknown"
+        ).lower(),
+        "units": str(
+            report.get("units")
+            or sensor_preprocessing.get("output_units")
+            or source.get("units")
+            or "unknown"
+        ).lower(),
+        "radiometric_domain": str(
+            sensor_preprocessing.get("output_domain") or "unknown"
+        ).lower(),
+        "calibration_status": str(
+            sensor_preprocessing.get("calibration_status") or "unknown"
+        ).lower(),
         "gsd_bucket": gsd_bucket,
-        "detector": str(detector.get("name") or "unknown").lower(),
+        "detector": str(detector.get("method") or detector.get("name") or "unknown").lower(),
     }
     processing["processing_config_hash"] = hashlib.sha256(
         json.dumps(detector, sort_keys=True, ensure_ascii=True).encode("utf-8")
@@ -238,7 +277,7 @@ def _tasks_from_report(
                 "valid_fraction": valid_fraction,
                 "water_mask_source": "explicit_context" if explicit else "valid_data_proxy",
                 "tile_stats": stats,
-                "tile_area_km2": _tile_area_km2(dataset, tile_size),
+                "tile_area_km2": _tile_area_km2(dataset, tile_size, row0, col0),
                 "prediction": prediction,
                 "reference": _reference_quality(prediction),
                 "source": source,
@@ -453,25 +492,21 @@ def _context_stratum(lon: float, lat: float, contexts: list[tuple[str, Any]]) ->
     return None
 
 
-def _tile_area_km2(dataset: Any, size: int) -> float:
+def _tile_area_km2(
+    dataset: Any,
+    size: int,
+    row0: int = 0,
+    col0: int = 0,
+) -> float:
     try:
-        pixel_area = abs(float(dataset.transform.a) * float(dataset.transform.e))
+        scale = pixel_scale_m(
+            row0 + size / 2.0,
+            col0 + size / 2.0,
+            _geo_context(dataset),
+        )
+        return float(scale.area_m2) * size * size / 1_000_000.0
     except (AttributeError, TypeError, ValueError):
-        pixel_area = 0.0
-    if dataset.crs and getattr(dataset.crs, "is_geographic", False):
-        try:
-            from pyproj import Geod
-
-            context = _geo_context(dataset)
-            first = pixel_to_lonlat(0.0, 0.0, context)
-            second = pixel_to_lonlat(float(size), float(size), context)
-            geod = Geod(ellps="WGS84")
-            width_m = abs(geod.inv(first.lon, first.lat, second.lon, first.lat)[2])
-            height_m = abs(geod.inv(first.lon, first.lat, first.lon, second.lat)[2])
-            return width_m * height_m / 1_000_000.0
-        except Exception:
-            return 0.0
-    return pixel_area * size * size / 1_000_000.0
+        return 0.0
 
 
 def _geo_context(dataset: Any) -> Any:

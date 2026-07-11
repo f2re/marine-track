@@ -46,6 +46,9 @@ def test_health_is_degraded_but_non_failed_before_first_calibration(tmp_path, mo
     report = collect_health(base_dir=tmp_path)
     assert report.status == "degraded"
     assert not any(check.critical and check.status == "failed" for check in report.checks)
+    capabilities = next(item for item in report.checks if item.name == "sensor_capabilities")
+    assert capabilities.status == "ok"
+    assert capabilities.data["sentinel2_single_band_experimental"] is False
     serialized = json.dumps(report.to_dict())
     assert "TELEGRAM_BOT_TOKEN" not in serialized
 

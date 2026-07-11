@@ -171,6 +171,7 @@ def build_reproducibility_manifest(
     materialized: Any,
     effective_config: Any,
     *,
+    preprocessing_plan: Any | None = None,
     output_dir: Path,
 ) -> dict[str, Any]:
     return {
@@ -182,6 +183,9 @@ def build_reproducibility_manifest(
             "platform": platform.platform(),
         },
         "effective_processing": effective_config.as_report_dict(),
+        "sensor_preprocessing": (
+            preprocessing_plan.as_dict() if preprocessing_plan is not None else None
+        ),
         "scene": {
             "provider": materialized.provider,
             "sensor": materialized.scene.sensor.value,
