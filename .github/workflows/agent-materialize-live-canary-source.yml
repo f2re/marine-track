@@ -1,0 +1,51 @@
+name: Materialize live canary source
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.head_ref == 'agent/live-s1-canary-selftest-20260711'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-s1-canary-selftest-20260711
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply integration to the branch
+        run: |
+          set -Eeuo pipefail
+          python scripts/apply_live_s1_canary.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/test_provider_canary.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '    assert result.report["status"] == "success"\n',
+              '    assert result.report["status"] == "success", result.report\n',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Commit source for standard CI
+        run: |
+          set -Eeuo pipefail
+          rm -f scripts/apply_live_s1_canary.py
+          rm -f .github/workflows/agent-finalize-live-s1-canary.yml
+          rm -f .github/workflows/agent-finalize-live-s1-canary-v2.yml
+          rm -f .github/workflows/agent-materialize-live-canary-source.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git diff --cached --check
+          git commit -m 'Materialize live Sentinel-1 canary source'
+          git push origin HEAD:agent/live-s1-canary-selftest-20260711
