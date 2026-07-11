@@ -102,6 +102,7 @@ def collect_health(
     checks.append(_writable_check("cache_dir", cache_dir))
     checks.append(_disk_check(output_dir))
     checks.append(_registry_check(output_dir / "scene_registry.json"))
+    checks.append(_user_state_check(output_dir))
     checks.append(_calibration_check(output_dir))
     checks.append(_access_policy_check())
 
@@ -273,6 +274,56 @@ def _registry_check(path: Path) -> HealthCheck:
             critical=True,
             detail=f"invalid JSON/state: {type(exc).__name__}",
         )
+
+
+def _user_state_check(output_dir: Path) -> HealthCheck:
+    try:
+        from marine_track.telegram_user_state import (
+            STATE_SCHEMA_VERSION,
+            inspect_user_state,
+        )
+
+        inspection = inspect_user_state(output_dir)
+    except Exception as exc:
+        return HealthCheck(
+            name="telegram_user_state",
+            status="failed",
+            critical=True,
+            detail=f"state inspection failed: {type(exc).__name__}",
+        )
+
+    data = {
+        "schema_version": inspection.schema_version,
+        "users": inspection.user_count,
+        "quarantined": inspection.quarantine_count,
+        "atomic_replace": True,
+        "inter_process_lock": True,
+    }
+    if not inspection.valid:
+        return HealthCheck(
+            name="telegram_user_state",
+            status="failed",
+            critical=True,
+            detail=inspection.detail,
+            data=data,
+        )
+    if not inspection.exists:
+        return HealthCheck(
+            name="telegram_user_state",
+            status="warning",
+            critical=False,
+            detail=inspection.detail,
+            data=data,
+        )
+    legacy = inspection.schema_version != STATE_SCHEMA_VERSION
+    degraded = legacy or bool(inspection.quarantine_count)
+    return HealthCheck(
+        name="telegram_user_state",
+        status="warning" if degraded else "ok",
+        critical=False,
+        detail=inspection.detail,
+        data=data,
+    )
 
 
 def _calibration_check(output_dir: Path) -> HealthCheck:
