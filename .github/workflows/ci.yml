@@ -36,10 +36,40 @@ jobs:
       - name: Test
         run: |
           set +e
-          pytest -q > pytest.txt 2>&1
+          python -m pytest -q > pytest.txt 2>&1
           status=$?
           echo "$status" > pytest.exit
           cat pytest.txt
+          exit 0
+      - name: Type check
+        run: |
+          set +e
+          mypy --no-incremental src > mypy.txt 2>&1
+          status=$?
+          echo "$status" > mypy.exit
+          cat mypy.txt
+          exit 0
+      - name: Package build
+        run: |
+          set +e
+          python -m build > build.txt 2>&1
+          status=$?
+          echo "$status" > build.exit
+          cat build.txt
+          exit 0
+      - name: Runtime check
+        env:
+          MARINE_TRACK_PROVIDER_PROFILE: core
+          TELEGRAM_BOT_TOKEN: ci-placeholder
+          TELEGRAM_ADMIN_IDS: '1'
+          MARINE_TRACK_OUTPUT_DIR: runs/ci-telegram
+          MARINE_TRACK_CACHE_DIR: runs/ci-cache
+        run: |
+          set +e
+          python runtime_check.py > runtime-check.txt 2>&1
+          status=$?
+          echo "$status" > runtime-check.exit
+          cat runtime-check.txt
           exit 0
       - name: Upload diagnostics
         if: always()
@@ -51,6 +81,12 @@ jobs:
             ruff.exit
             pytest.txt
             pytest.exit
+            mypy.txt
+            mypy.exit
+            build.txt
+            build.exit
+            runtime-check.txt
+            runtime-check.exit
           if-no-files-found: error
           retention-days: 7
       - name: Gate
@@ -58,3 +94,6 @@ jobs:
         run: |
           test "$(cat ruff.exit)" = "0"
           test "$(cat pytest.exit)" = "0"
+          test "$(cat mypy.exit)" = "0"
+          test "$(cat build.exit)" = "0"
+          test "$(cat runtime-check.exit)" = "0"
