@@ -1,69 +1,125 @@
-# Release Gate v0.2
+# Release Gate v0.3
 
-Release gate отделяет «код запускается» от «метод научно подтверждён». До закрытия engineering gate нельзя объявлять detector operational и расширять алгоритмы ради новых функций.
+Release gate отделяет четыре разных утверждения:
 
-## A. Engineering gate
+1. исходный код и package baseline проходят offline проверки;
+2. deploy/rollback воспроизводимы на целевом сервере;
+3. operational provider asset действительно доступен через live network path;
+4. `vessel_candidate` научно валидирован на независимом benchmark.
 
-- [ ] `bash -n install_telegram_bot.sh` проходит.
-- [ ] `bash -n deploy_telegram_bot.sh` проходит.
-- [ ] `python -m pytest -q` проходит без stale tests.
-- [ ] `ruff check src tests` проходит.
-- [ ] `mypy` baseline отделяет optional-stub debt от реальных ошибок и не ухудшается.
-- [ ] CI проверяет заявленный Python support matrix и clean constrained install; `LICENSE` соответствует metadata.
-- [ ] Clean install создаёт рабочий `marine-track-bot.service`.
-- [ ] `MARINE_TRACK_PROVIDER_PROFILE=core` runtime check проходит с тестовым token.
-- [ ] Profile `all` либо проходит, либо явно сообщает отсутствующие optional provider modules/credentials.
-- [ ] Пустой Telegram token останавливает deploy до restart.
-- [ ] Неверный Telegram token останавливает deploy на healthcheck до restart.
-- [ ] `/start`, `/menu`, `/status`, `/whoami` отвечают после запуска.
-- [ ] `/dates` и `/detectbbox` возвращают сцены или typed provider/materializer error.
-- [ ] Preview/archive-only asset никогда не передаётся detector как raster.
-- [ ] Search cache key содержит абсолютные start/end, purpose/capability, filters, provider/config fingerprint и schema version.
-- [ ] `/dates` cache не может быть использован `/detectbbox` без detection-capability/readability revalidation.
-- [ ] Самая свежая сцена выбирается детерминированной сортировкой, а не случайным порядком provider response.
-- [ ] Search/raster cache atomic; параллельная загрузка одного asset защищена lock-файлом.
-- [ ] Registry/user-state пишутся atomic/locked, имеют schema version, recovery и полный retention contract.
-- [ ] Пустой `TELEGRAM_ADMIN_IDS` не открывает operational commands; public mode только explicit.
-- [ ] Scene tokens/callbacks привязаны к user/chat; cross-user replay отклоняется.
-- [ ] До provider/download применяются AOI/interval/result/bytes/time и per-user rate/concurrency limits.
-- [ ] Повторный deploy не перезаписывает `.env`, runs и готовую land mask.
-- [ ] Production code/venv read-only для service user; release switch/rollback атомарны.
-- [ ] Отчёт содержит provider, collection, typed asset, CRS/GSD, scene time interval, effective config, code commit и очищенные ошибки.
-- [ ] Logs/report не содержат bearer/SAS/query tokens, credentials, AIS path и абсолютные server paths.
+Закрытие одного уровня не закрывает остальные. Зелёный CI не подтверждает live provider access или научную точность.
 
-## B. Data-access gate
+## A. Offline code/package gate
 
-- [ ] CDSE STAC использует `https://stac.dataspace.copernicus.eu/v1/`.
-- [ ] CDSE collections: `sentinel-1-grd`, `sentinel-2-l2a`.
-- [ ] CDSE OData fallback проверен на той же AOI/time window.
-- [ ] CDSE typed assets сохраняют media type/roles/band/units/nodata/auth/alternates и calibration/noise sidecars.
-- [ ] Planetary Computer auth/SAS preflight проверен отдельно от public catalog search.
-- [ ] Earth Search S1 не считается credentials-free: requester-pays S3 path либо проходит credential/cost canary, либо остаётся disabled.
-- [ ] ASF явно помечен как archive/preview до SAFE/GRD processing.
-- [ ] Provider capability и media type проверяются до materialization.
-- [ ] Operational provider path проходит live sign + range-read canary; offline import/config preflight не считается readiness.
+- [x] `bash -n install_telegram_bot.sh` проходит.
+- [x] `bash -n deploy_telegram_bot.sh` проходит.
+- [x] `python -m pytest -q` проходит; финальный PR #29 gate: 189 tests.
+- [x] `ruff check src tests runtime_check.py` проходит.
+- [x] controlled `mypy --no-incremental src` baseline запрещает рост ошибок.
+- [x] `python -m build` создаёт sdist и wheel.
+- [x] `MARINE_TRACK_PROVIDER_PROFILE=core python runtime_check.py` проходит с тестовым Telegram environment.
+- [x] CI сохраняет diagnostics для lint/test/mypy/build/runtime gate.
+- [x] Временные write-capable PR-finalization workflows и trigger files удалены из `main`.
+- [ ] Проверяется полная Python support matrix, clean constrained install и dependency-update job.
+- [ ] Dependency lock/constraints policy формально зафиксирована.
 
-## C. Scientific gate
+Статус A: **закрыт для текущего Python 3.11 offline CI baseline; расширенная compatibility matrix открыта**.
 
-- [ ] Есть scene manifest, labels, negative scenes и data card.
-- [ ] Есть fixed scene-level/spatial-temporal train/validation/test split.
-- [ ] Есть classical CFAR baseline и error taxonomy.
-- [ ] Метрики detection: precision/recall/F1, POD/FAR/CSI, false alarms/km², localization error.
+## B. Deploy/runtime gate на целевом сервере
+
+- [ ] Clean install создаёт рабочий `marine-track-bot.service` на контролируемом target host.
+- [ ] Пустой Telegram token останавливает deploy до service switch/restart.
+- [ ] Невалидный runtime release отклоняется pre-switch checks.
+- [ ] `/start`, `/menu`, `/status`, `/whoami` отвечают после deploy.
+- [ ] Повторный deploy сохраняет `/etc/marine-track/marine-track.env`, state, cache и runs.
+- [ ] Atomic release switch и rollback фактически проверены на target host.
+- [ ] Service user не может изменять versioned code/venv release.
+- [ ] Corrupt/partial release не оставляет сервис в неопределённом состоянии.
+
+Скрипты и offline checks реализованы, но clean target-host install/deploy/rollback в текущей проверке не выполнялись.
+
+Статус B: **не закрыт**.
+
+## C. Security/state/resource gate
+
+- [x] Пустой `TELEGRAM_ADMIN_IDS` не открывает operational commands; public mode только explicit.
+- [x] Scene tokens/callbacks привязаны к owner user/chat; cross-user replay отклоняется.
+- [x] Preview/archive/search-only asset не передаётся detector как raster.
+- [x] Search cache key учитывает absolute time window и purpose/capability; detection cache revalidates processability.
+- [x] Сцены сортируются детерминированно.
+- [x] AOI/result/raster/time limits применяются до дорогой materialization.
+- [x] Remote detection materialization выполняется в killable worker с wall-clock limit.
+- [x] Reports/errors проходят sanitizer; tokens, signed query, credentials и absolute paths не сохраняются.
+- [ ] Transactional Telegram user state из PR #30 слит в `main`.
+- [ ] Inter-process state lock, fsync/replace, mode `0600`, quarantine и parallel lost-update test подтверждены на актуальном `main`.
+- [ ] Полный retention/recovery contract для всех state/cache/report schemas подтверждён integration tests.
+
+Статус C: **частично закрыт; блокер — PR #30 и его integration verification**.
+
+## D. Data-access/provider gate
+
+### Реализовано в коде
+
+- [x] `SceneAsset` хранит typed raster/capability/auth metadata.
+- [x] Provider capability и media type проверяются до materialization.
+- [x] Planetary Computer является первым tokenless Sentinel-1 detection path.
+- [x] CDSE и Sentinel Hub пропускаются до OAuth/network call при отсутствии полного credential contract.
+- [x] ASF archive/preview assets не считаются processable raster baseline.
+- [x] Asset canary выполняет compact AOI → search → typed asset → signing/OAuth → TIFF range-read.
+- [x] Canary report записывается atomic, mode `0600`, redacted, со stage durations и typed failure cause.
+- [x] Telegram `/selftest` доступен только администраторам.
+- [x] Detection canary требует отдельного подтверждения и принудительно выключает wake/Kelvin research.
+- [x] Canary не запускается автоматически при deploy/restart/healthcheck.
+
+### Требуется live verification
+
+- [ ] На target host выполнен explicit asset canary с реальной сетью и сохранён redacted report.
+- [ ] Проверен live Planetary Computer catalog + runtime signing + TIFF range-read.
+- [ ] Для реально используемого CDSE/Sentinel Hub path проверены credentials, expiry и typed failure behavior.
+- [ ] Provider success/latency/bytes/cache outcomes зафиксированы без secrets.
+- [ ] Detection canary выполнен только после отдельного разрешения, на малом AOI.
+
+Отсутствие credentials для optional providers не является ошибкой установки: tokenless Planetary Computer используется первым. Доступность внешней сети, каталога и конкретной сцены не может гарантироваться приложением.
+
+Статус D: **code path готов; live data-access gate не закрыт**.
+
+## E. Scientific gate
+
+- [ ] Есть real S1 scene manifest, data card и versioned label schema.
+- [ ] Есть positive/negative/uncertain labels, object body и optional wake geometry.
+- [ ] Есть fixed scene-level train/validation/test split без spatial/temporal leakage.
+- [ ] Метрики detection: precision, recall, F1, POD, FAR, CSI, false alarms/km², localization error.
 - [ ] Метрики wake: detection rate, false-wake rate, angular error.
-- [ ] Метрики speed: bias/MAE/RMSE/coverage against paired AIS/reference.
-- [ ] Метрики стратифицированы по sensor/polarization/incidence/wind/depth/coast/open sea.
-- [ ] `confidence` calibrated on a held-out calibration split; до этого это `evidence_score`.
-- [ ] Kelvin wavelength выдаётся только при applicability/QC/uncertainty.
-- [ ] AIS/Ocean context не подменяют отсутствие спутникового признака.
-- [ ] AIS matching имеет max interpolation gap, one-to-one assignment, ambiguity margin и acquisition-time uncertainty.
-- [ ] `speed.value`/Kelvin proxy/AIS SOG и heading axis/direction хранятся раздельно.
-- [ ] Feature units/domain/applicability соответствуют [`FEATURE_CATALOG.md`](FEATURE_CATALOG.md).
+- [ ] Метрики operations: latency, provider success, cache hit и bytes.
+- [ ] Score калиброван только на отдельном calibration split с uncertainty.
+- [ ] Kelvin wavelength/speed выдаётся только как research proxy с applicability/QC/uncertainty.
+- [ ] AIS хранится как внешний reference с temporal/spatial QC и не подменяет satellite evidence.
+- [ ] `speed.value_knots=null`, `speed.method=not_estimated` остаются operational default для одной сцены.
+- [ ] Sentinel-2 имеет B02/B03/B04/B08 common grid, SCL/cloud/shadow/water/glint masks и отдельную optical calibration.
 
-## Current audit status (2026-07-10)
+До закрытия E результат называется только `vessel_candidate`; ranking/evidence score не является вероятностью.
 
-- Engineering: **не закрыт** — 77 tests passed, 4 failed; ruff reports 2 import-order errors; последний CI остановился на lint, test job пропущен; `mypy --no-incremental` даёт 74 ошибки.
-- Correctness/security: **не закрыт** — search cache коллидирует по времени/capability, Telegram auth fail-open при пустом allowlist, scene tokens не user-scoped.
-- Data access: **не закрыт** — CDSE provider hard-codes deprecated STAC endpoint/legacy collection names и теряет asset/auth/sidecar metadata.
-- Scientific: **не закрыт** — benchmark, labels, calibration and uncertainty отсутствуют.
+Статус E: **не закрыт**.
 
-Подробности и приоритеты: [`AUDIT_2026-07-10.md`](AUDIT_2026-07-10.md), [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+## Current audited status — 2026-07-11
+
+- `main` содержит PR #29: provider canary, admin self-test, bounded detection и tokenless fallback.
+- PR #31 закрыт как дубликат и не сливался.
+- Временная orchestration-инфраструктура удалена отдельным зелёным PR #32.
+- PR #30 остаётся открытым и является следующим P0 engineering этапом.
+- Offline CI/package gate зелёный.
+- Target-host deploy/rollback, explicit live asset canary и scientific benchmark не проверялись и не объявляются успешными.
+
+## Обязательная команда проверки перед merge
+
+```bash
+bash -n install_telegram_bot.sh
+bash -n deploy_telegram_bot.sh
+python -m pytest -q
+ruff check src tests
+mypy --no-incremental src
+python -m build
+python runtime_check.py
+```
+
+Live canary запускается только явно и не входит в обычный healthcheck.
