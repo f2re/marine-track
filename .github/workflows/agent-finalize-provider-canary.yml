@@ -1,0 +1,62 @@
+name: Finalize live provider canary
+
+on:
+  push:
+    branches:
+      - agent/live-provider-selftest-20260711
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-provider-selftest-20260711
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply integration changes
+        run: python scripts/apply_provider_canary.py
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Validate
+        run: |
+          set -Eeuo pipefail
+          ruff check --fix src tests runtime_check.py
+          python -m compileall -q src runtime_check.py
+          bash -n install_telegram_bot.sh deploy_telegram_bot.sh
+          ruff check src tests runtime_check.py
+          pytest -q
+      - name: Commit clean source diff
+        run: |
+          set -Eeuo pipefail
+          rm -f scripts/apply_provider_canary.py
+          rm -f .github/workflows/agent-finalize-provider-canary.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git diff --cached --check
+          test -n "$(git diff --cached --name-only -- src tests docs runtime_check.py .env.example)"
+          test -z "$(git diff --cached --name-only | grep -E '(apply_provider_canary|agent-finalize-provider-canary)' || true)"
+          git commit -m 'Add live Sentinel-1 provider canary and administrator self-test'
+          git push origin HEAD:agent/live-provider-selftest-20260711
+      - name: Publish diagnostics
+        if: failure()
+        run: |
+          {
+            echo 'Provider canary finalization failed.'
+            echo
+            echo '```text'
+            git status --short || true
+            echo '```'
+          } > /tmp/provider-canary-diagnostics.md
+          gh pr comment 29 --body-file /tmp/provider-canary-diagnostics.md || true
