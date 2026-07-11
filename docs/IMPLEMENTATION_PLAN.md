@@ -1,196 +1,168 @@
 # План реализации Marine Track
 
-План разделяет эксплуатационную надёжность, фактически реализованный single-raster MVP и научную валидацию. Пока release gate не закрыт, расширение алгоритмов и подключение новых источников не является приоритетом.
+План фиксирует фактический engineering/data/science gate. Чекбокс означает подтверждённую реализацию и тест, а не намерение. Live provider access, серверный deploy и научная точность отмечаются отдельно от offline CI.
 
-## Целевой результат текущего релиза
+## Целевой operational contract
 
-Telegram-бот и CLI должны по AOI/времени:
+```text
+AOI + UTC interval
+→ provider search
+→ typed processable raster asset
+→ runtime signing/OAuth when required
+→ materialization and AOI crop
+→ Sentinel-1 preprocessing and valid mask
+→ guard-cell CFAR candidate detector
+→ optional external AIS/research wake evidence
+→ GeoJSON/CSV/Parquet/report/PNG
+→ Telegram
+```
 
-1. найти сцену с реально доступным GeoTIFF/COG;
-2. сохранить полную provenance и effective processing config;
-3. получить геопривязанные `vessel_candidate` с evidence features и quality flags;
-4. показать optional wake evidence, не выдавая любой line feature за след;
-5. выдать GeoJSON, CSV/Parquet, overview/crops и `report.json`;
-6. вернуть понятную ошибку при отсутствии processable asset, а не «0 судов».
+Выходной объект называется `vessel_candidate`. `ranking_score`/`evidence_score` не является вероятностью. Для одной сцены operational speed по умолчанию: `value_knots=null`, `method=not_estimated`. AIS SOG/COG хранится отдельно как external reference. Kelvin speed остаётся research-only proxy.
 
-Оперативная скорость судна не входит в обязательный MVP. AIS SOG — внешний reference. Kelvin-wavelength результат — research-only proxy до отдельной валидации.
+## Срез состояния на 2026-07-11
 
-## Срез состояния на 2026-07-10
+### Реализовано в `main`
 
-### Реализовано
+- [x] Typed `SceneAsset`, capability-aware selection и authenticated/transient asset access.
+- [x] Hardened scene-search cache с absolute time/capability contract и deterministic ordering.
+- [x] Atomic/locked raster materialization, AOI crop, valid masks и resource limits.
+- [x] Sentinel-1 preprocessing contract; Sentinel-2 single-band fail-closed/experimental.
+- [x] Guard-cell CFAR, tiled inference, overlap ownership и candidate limits.
+- [x] Provenance/redaction и раздельная семантика operational speed, AIS reference и research proxy.
+- [x] Fail-closed Telegram authorization и user/chat-scoped scene tokens/callbacks.
+- [x] Versioned immutable releases, atomic systemd switch/rollback и persistent state/cache/output.
+- [x] Calibration-area and phase-2 preparation workflow.
+- [x] Explicit Sentinel-1 provider canary modes `asset` и `detection`.
+- [x] Compact canary AOI, transient signing/OAuth и TIFF range-read probe.
+- [x] Atomic mode-0600 redacted canary reports со stage durations и typed failure.
+- [x] Administrator-only Telegram `/selftest` с отдельным confirmation для detection mode.
+- [x] Tokenless Planetary Computer первым для Sentinel-1 raster path.
+- [x] CDSE/Sentinel Hub без полных optional credentials пропускаются до OAuth/network call.
+- [x] Normal Telegram candidate detection выполняется в killable subprocess с hard wall-clock timeout.
+- [x] Default detection AOI ограничен compact sector; oversized bbox отклоняется до expensive I/O.
+- [x] Deploy/runtime preflight объясняет enabled/disabled provider access без вывода secrets.
+- [x] Временная write-capable PR-finalization orchestration удалена после merge.
 
-- [x] Telegram-бот, главное меню, сохранённые AOI/bbox, пагинация сцен.
-- [x] `/dates`, `/bboxdates`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`, `/output`.
-- [x] scene registry с token/provider/sensor/assets/AOI geometry.
-- [x] TTL scene-search cache и raster cache.
-- [x] AOI crop и optional land/shoreline mask.
-- [x] Single-band local-CFAR-style candidate detector.
-- [x] connected components, площадь, форма, локальный контраст и геопривязанный pixel scale.
-- [x] Canny/Hough wake-axis enrichment с явной 180° ambiguity.
-- [x] local AIS CSV match, интерполяция track point и overlay.
-- [x] GeoJSON/CSV/Parquet, overview/crops и `report.json`.
-- [x] два эксплуатационных скрипта install/deploy, provider profiles и smoke-check.
+PR #29 слит в `main` как `dc3833011be8584737b047c6c322fbe8ceda5032`; cleanup PR #32 — `b128873d6e443cedc7628312babae12323fb9d62`. CI run 701: shell/ruff/189 tests/build/core runtime/no-growth mypy gate passed.
 
-### Реализовано, но только экспериментально
+### Отдельный открытый PR #30
 
-- [~] wake wavelength → Kelvin formula: не является валидированной скоростью и не должно быть основным пользовательским полем.
-- [~] `confidence`: ranking score, не вероятность.
-- [~] Hough wake: candidate line, не подтверждённый Kelvin/turbulent wake.
-- [~] AIS: reference/matching layer, не независимая ground truth без контроля gaps, времени и качества.
+- [ ] Transactional Telegram user state: inter-process lock, read-modify-write transaction, temp+`fsync`+`os.replace`, mode 0600, corrupt JSON quarantine и parallel lost-update test.
+- [ ] PR #30 остаётся draft и основан на более старом `main`; перед продолжением его нужно обновить после слияния PR #29, устранить временный finalize workflow и повторить полный release gate.
 
-### Не реализовано или не подключено
+### Не подтверждено
 
-- [ ] Release gate: текущая ветка имеет 4 failing tests и 2 ruff import errors.
-- [ ] Корректный search cache: текущий key не содержит абсолютные start/end и capability; `/dates` может загрязнить `/detectbbox` cache.
-- [ ] Fail-closed Telegram auth, user-scoped scene tokens, quotas и atomic state writes.
-- [ ] Актуальный CDSE STAC v1 endpoint/collections и CDSE OData fallback.
-- [ ] Typed asset/auth contract для search-only/preview/raster/archive capabilities и CDSE sidecars/alternates.
-- [ ] Effective `config/processing.yaml` в CLI/Telegram pipeline.
-- [ ] S1 calibration/unit contract, proper guard-cell CFAR, robust clutter model.
-- [ ] S1 dual-polarization fusion и incidence-angle provenance.
-- [ ] Wake mask/sector/arm/continuity/angle quality gates.
-- [ ] Интеграция `validation.py`, explicit QC states и uncertainty.
-- [ ] Copernicus Marine current/wave/wind context в detection report.
-- [ ] Benchmark dataset, labels, fixed split и evaluation CLI.
-- [ ] Sentinel-2 B02/B03/B04/B08 stack, SCL/cloud/water mask и optical detector.
-- [ ] ASF SAFE/GRD materializer/processor.
-- [ ] Raster cache lock-файлы и tiled inference с deduplication.
-- [ ] HTML-отчёт; он не является требованием текущего MVP, пока нет отдельного UI scope.
+- [ ] Clean install и atomic deploy на `us-vmpico` после обновления `main`.
+- [ ] Post-switch Telegram healthcheck и rollback на реальном systemd service.
+- [ ] Live Planetary Computer search/sign/range-read canary.
+- [ ] Live detection canary с отдельным operator confirmation.
+- [ ] Независимый benchmark, calibration split и uncertainty.
+- [ ] Operational Sentinel-2 stack B02/B03/B04/B08 с SCL/cloud/shadow/water/glint masks.
 
-## P0. Сначала исправить correctness, access и пользовательскую семантику
+## Матрица требований текущего gate
 
-### P0.1. Search/cache correctness
+| Требование | Реализация | Тест/проверка | Документация | Статус |
+|---|---|---|---|---|
+| Processable asset, а не preview/archive | `SceneAsset`, capability selection, materializer typed errors | offline provider/materializer tests | technical spec, README | закрыто offline |
+| Бесплатный path без operator token | Planetary Computer STAC + runtime signing | tokenless fallback regression | README, `.env.example` | закрыто offline; live не проверен |
+| Optional OAuth не блокирует fallback | credential preflight и provider skip | complete/incomplete pair tests | README, deploy output | закрыто offline |
+| Нет вечного Telegram materialize | spawned worker, GDAL HTTP limits, terminate/kill | stalled-worker timeout test | README, env template | закрыто offline |
+| Bounded AOI до raster I/O | compact default sector и detection area ceiling | provider-not-called oversized AOI test | README, release gate | закрыто offline |
+| Canary не запускается автоматически | explicit CLI/Telegram action, separate detection confirm | mocked canary/selftest tests | `PROVIDER_CANARY.md` | закрыто offline |
+| Sanitized report/errors | centralized redaction, atomic 0600 report | secret/path/query redaction tests | provider canary doc | закрыто offline |
+| Telegram mutable state transactional | PR #30 | pending parallel/recovery gate | draft state doc | открыто |
+| Live provider/data access | explicit asset canary | не запускался | release gate | открыто |
+| Научная точность | dataset/evaluation/calibration workflow | benchmark отсутствует | technical spec/catalog | открыто |
 
-- [ ] Включить в cache key canonical AOI hash, абсолютные `start/end` UTC, sensor, purpose/capability, filters, `max_results`, ordered provider/config fingerprint и schema version.
-- [ ] Разделить search-only `/dates` и detection-capable `/detectbbox`; при cache hit повторно проверять capability, auth expiry и raster readability.
-- [ ] Детерминированно сортировать сцены по acquisition time, provider priority и product id; зафиксировать tie-breaker.
-- [ ] Добавить regression tests для сдвинутых окон одинаковой длительности, cross-capability cache pollution, expired signed URL и provider-order change.
+## P0 — завершение server engineering gate
 
-### P0.2. Access control, resource limits и честный UI/schema
+### P0.1. Deployment нового `main`
 
-- [ ] Сделать Telegram authorization fail-closed при пустом `TELEGRAM_ADMIN_IDS`; public mode разрешать только отдельным explicit flag.
-- [ ] Привязать scene token, callbacks и output directory к owner user/chat; добавить cross-user replay tests.
-- [ ] Ввести limits: AOI area/vertices/aspect, interval, `max_results`, download bytes, disk/RAM/time, per-user rate/concurrency.
-- [ ] Заменить `vessels`, `Судно`, `conf` на candidate/evidence labels до benchmark.
-- [ ] Разделить `speed.value_knots=null`, `research_proxies.kelvin_speed_proxy_knots` и `reference.ais.sog_knots`; не перезаписывать поля друг другом.
-- [ ] Централизованно удалять bearer/SAS/query secrets, credentials и абсолютные local paths из errors/logs/report.
+1. Обновить server checkout fast-forward от `origin/main`.
+2. Запустить `deploy_telegram_bot.sh`; зафиксировать release id/code SHA.
+3. Проверить `systemctl is-active`, runtime/health output и сохранение canonical env/state/cache/output.
+4. Проверить `/start`, `/status`, `/dates` и bounded `/detectbbox`.
+5. Не запускать live canary автоматически. Asset canary выполнить отдельно только с явным разрешением на сетевой доступ.
 
-### P0.3. Typed provider/asset contract
+### P0.2. Продолжение существующего PR #30
 
-- [ ] Ввести `SceneAsset`: href/alternates, media type, roles, band/polarization, units/scale/offset/nodata, shape, auth scheme/expiry, sidecars и checksum.
-- [ ] Вынести в env/config CDSE STAC v1, `sentinel-1-grd`, `sentinel-2-l2a` и OData endpoint.
-- [ ] Поддержать CDSE bearer/alternate/S3 access и calibration/noise sidecars; не считать миграцию законченной одной заменой URL.
-- [ ] Добавить auth-aware range-read canary и typed failure до полного скачивания.
-- [ ] Уточнить Planetary Computer catalog-vs-asset preflight; для Earth Search S1 учитывать `s3://` requester-pays credentials/cost.
-- [ ] Оставить ASF `search/preview/archive` до SAFE/GRD processor.
-- [ ] Добавить offline contract fixtures и минимальные live canaries для выбранных operational provider paths.
+1. Перебазировать/обновить branch от нового `main` без создания нового PR.
+2. Удалить temporary self-finalization workflow/script из итогового diff.
+3. Проверить flock transaction на полном read-modify-write участке.
+4. Проверить same-directory temporary, `fsync` файла и директории, `os.replace`, mode 0600.
+5. Проверить corrupt active JSON quarantine и deterministic recovery.
+6. Добавить multi-process lost-update test и полный mandatory gate.
 
-### P0.4. CI и воспроизводимый runtime contract
+### P0.3. Контролируемый typing/packaging baseline
 
-- [ ] Обновить stale tests под текущий контракт: alias `none` удалён, `check_smoke` API актуален, сообщения numeric validation синхронизированы.
-- [ ] Исправить import order в `detection_pipeline.py` и `telegram_bot.py`.
-- [ ] Сохранить regression test для нулевого background std: candidate не должен получать ложный положительный contrast без явного fallback-флага.
-- [ ] Ввести `mypy` baseline: отделить optional dependency/stub debt от реальных type errors и запрещать рост числа ошибок.
-- [ ] Проверять все заявленные Python versions, clean constrained install и dependency update job; добавить constraints/lock strategy.
-- [ ] Добавить `LICENSE`, соответствующий metadata, и проверить sdist/wheel/runtime install.
-- [ ] Повторить `pytest -q`, `ruff check src tests`, `mypy`, `bash -n`, build/install и core runtime check.
+- [x] Exact raw `mypy --no-incremental src` сохраняется в diagnostics.
+- [x] CI сравнивает нормализованные error fingerprints с актуальным `main` и запрещает рост.
+- [ ] Последовательно уменьшать raw debt без широких `ignore_errors`.
+- [ ] Добавить Python 3.10/3.11/3.12 support matrix и clean constrained install.
+- [ ] Проверить license metadata и reproducible dependency/constraints policy.
 
-## P1-A. Воспроизводимость и эксплуатационная основа
+## P1 — эксплуатационная проверяемость после server gate
 
-### P1-A.1. Effective config и provenance
+### P1.1. Provider canary
 
-- [ ] Сделать `config/processing.yaml` и `config/sources.yaml` единственным versioned baseline; env/CLI overlays формируют один validated effective config.
-- [ ] Применять одинаковые detector/provider filters и priorities в CLI и Telegram.
-- [ ] Писать sanitized manifest: code commit, config hash/effective values, package/runtime versions, scene timing, collection/asset/auth mode, CRS/transform/GSD/band/units, AOI hash и errors.
-- [ ] Не сохранять signed href, secrets, AIS local path и server absolute artifact paths.
+Asset mode:
 
-### P1-A.2. Mask, state, cache и deploy
+```text
+compact AOI → Sentinel-1 search → typed asset → transient signing/OAuth → TIFF range-read
+```
 
-- [ ] Хранить versioned global coastline и строить AOI tile/subset cache, а не одну mask только для default AOI.
-- [ ] Делать shoreline buffer в metric/geodesic geometry; использовать explicit valid-data/water mask.
-- [ ] Сделать registry/user-state/cache manifests atomic и locked; добавить schema migration, corruption recovery и полный retention для `dates_*`, `bboxdates_*`, `detectbbox_*`, previews/registry.
-- [ ] Перевести production deploy на versioned root-owned read-only releases, отдельные writable state/cache/output dirs, pre-switch checks, atomic switch и rollback.
+Detection mode:
 
-## P1-B. S1 baseline, на котором можно строить науку
+```text
+separate confirmation → compact AOI → one scoped scene → materialize/preprocess/detect
+```
 
-Целевые formulas/units/QC для object, wake, environment и AIS fields зафиксированы в [`FEATURE_CATALOG.md`](FEATURE_CATALOG.md).
+Ограничения:
 
-### P1-B.1. Preprocessing и CFAR
+- не запускать при deploy/restart/обычном healthcheck;
+- wake/Kelvin всегда выключены;
+- report atomic, mode 0600 и redacted;
+- отсутствие processable asset — typed failure, не «0 кандидатов»;
+- live success подтверждает только integration/data access, не научную точность.
 
-- [ ] Зафиксировать units и calibration: DN/amplitude/sigma0/gamma0/dB в metadata.
-- [ ] Применять S1-specific preprocessing, valid water mask и NaN/edge accounting.
-- [ ] Заменить текущую схему на guard-cell CFAR: training ring отдельно от CUT/guard cells.
-- [ ] Добавить robust clutter alternatives: quantile/MAD, gamma/K-distribution preset по scene context.
-- [ ] Поддержать tiled inference, overlap merge и контроль duplicate detections.
-- [ ] Калибровать thresholds по validation split, а не только по synthetic test.
+### P1.2. Operations evidence
 
-### P1-B.2. Геометрия и wake
+- Сохранять latency по stages, provider success/failure class, bytes checked/downloaded и cache hit.
+- Проверять expired signing/OAuth и повторный запуск.
+- Проверять сохранение `.env`, state, cache и outputs при deploy/rollback.
+- Не логировать credentials, signed query, local absolute paths или user content.
 
-- [ ] Применять land mask и shoreline suppression и в detector, и в wake crop.
-- [ ] Удалять border/edge lines и проверять valid-water fraction.
-- [ ] Для каждой line hypothesis считать continuity, length, onset distance, sector behind vessel, local contrast.
-- [ ] Отдельно искать central turbulent wake и Kelvin arms; не смешивать их признаки.
-- [ ] Проверять arm symmetry, vertex proximity, angle residual и 180° ambiguity.
-- [ ] Отдавать heading только через quality gate и хранить circular uncertainty.
+## P2 — научная валидация после engineering/data-access gate
 
-### P1-B.3. AIS и ocean context
+1. Собрать scene manifest и data card на реальных Sentinel-1 сценах.
+2. Стратифицировать open sea, coast, port, offshore/high-clutter.
+3. Разметить positive/negative/uncertain, object body и optional wake geometry.
+4. Зафиксировать scene-level train/validation/test split без утечки соседних сцен.
+5. Добавить evaluation CLI и метрики:
+   - precision, recall, F1, POD, FAR, CSI;
+   - false alarms/km² и localization error;
+   - wake detection/false-wake/angular error;
+   - provider success, latency, cache rate и bytes.
+6. Калибровать score только на отдельном calibration split и сохранять uncertainty.
+7. Не объявлять score вероятностью или detector научно подтверждённым до независимого test result.
 
-- [ ] Ввести max AIS interpolation gap, time uncertainty, image acquisition interval и match ambiguity.
-- [ ] Выполнять one-to-one candidate↔AIS assignment и antimeridian-safe interpolation; хранить first/second match margin.
-- [ ] Хранить `ais_status`: `matched`, `unmatched`, `ambiguous`, `stale`, `out_of_window`.
-- [ ] Интегрировать `validation.py` в pipeline; сохранять причины физического rejection.
-- [ ] Подключить Copernicus Marine через явные dataset ids, units и temporal interpolation.
-- [ ] Для global baseline зафиксировать variables из PHY `GLOBAL_ANALYSISFORECAST_PHY_001_024` и WAV `GLOBAL_ANALYSISFORECAST_WAV_001_027`; для регионов разрешать versioned product override.
-- [ ] Добавить GEBCO 2026 AOI bathymetry subset и provenance для finite-depth applicability.
-- [ ] Для wake/speed учитывать current vector, wave height/period, wind/sea-state и finite-depth flag.
+## P3 — только после P2
 
-## P1-C. Benchmark и оценка
+- Sentinel-2 B02/B03/B04/B08 on common grid.
+- SCL/cloud/shadow/water/glint masks и отдельная optical calibration.
+- Dual-polarization/ML расширения только при dataset, baseline и ablation plan.
+- ASF SAFE/GRD processing только как отдельный typed processing path.
 
-- [ ] Собрать manifest сцен: product id, asset, sensor, polarization, orbit, incidence, GSD, wind/sea/depth context.
-- [ ] Разметить ship body, candidate/no-candidate, wake axis/arms, optional length/heading.
-- [ ] Сформировать negative scenes: sea clutter, coastline, port, offshore structures, clouds/glint.
-- [ ] Разделить train/validation/test по сценам и проходам, не допуская утечки соседних кадров.
-- [ ] Добавить baseline: current CFAR, improved guard-cell CFAR, optional classical wake detector.
-- [ ] Добавить evaluation CLI и bootstrap confidence intervals.
+## Обязательные команды перед каждым merge
 
-### Метрики
+```bash
+bash -n install_telegram_bot.sh
+bash -n deploy_telegram_bot.sh
+python -m pytest -q
+ruff check src tests
+mypy --no-incremental src
+python -m build
+python runtime_check.py
+```
 
-- detection: precision, recall, F1, POD, FAR, CSI, false alarms/km², localization MAE/p95;
-- wake: detection rate, false-wake rate, angular MAE/p95, continuity/arm quality;
-- speed: bias, MAE, RMSE, median absolute error, coverage and uncertainty calibration against AIS/reference;
-- operations: provider success, latency, cache hit rate, bytes downloaded, error class distribution.
-
-Научная приемка — улучшение относительно baseline на независимом test split с доверительными интервалами. Фиксированные проценты качества не объявляются до pilot benchmark.
-
-## P2. Sentinel-2 и расширение
-
-- [ ] Реализовать B02/B03/B04/B08 stack с единым CRS/resolution.
-- [ ] Добавить SCL/cloud/shadow/water/glint masks.
-- [ ] Разделить optical detector и S1 detector; не использовать один threshold profile.
-- [ ] Для inter-band speed учитывать реальные band time delays и геометрические corrections.
-- [ ] Добавлять optical Kelvin-wave speed только при достаточном разрешении/числе волн и с uncertainty.
-
-## P2. ASF и temporal tracking
-
-- [ ] Реализовать SAFE/GRD materializer и документировать system dependency (SNAP/pyroSAR или эквивалент).
-- [ ] Сохранять raw product checksum и processing version.
-- [ ] Добавить multi-scene association только после стабильного single-scene detector.
-- [ ] Lock-файлы для asset download и atomic cache manifest.
-
-## Критерий перехода к ML
-
-ML/нейросеть подключается только после:
-
-1. зелёного engineering gate;
-2. опубликованного data card/label schema;
-3. classical baseline с метриками и error taxonomy;
-4. fixed train/validation/test split;
-5. проверки CPU/RAM/latency и преимуществ относительно baseline.
-
-## Журнал
-
-- 2026-07-06: создан MVP pipeline, providers, Telegram flow и initial docs.
-- 2026-07-07: добавлены deployment/release gate, UX, caching, progress и output modes.
-- 2026-07-08: добавлены AIS matching, tracks и overlays.
-- 2026-07-09: добавлены shape/contrast/physical-scale metrics и experimental wake wavelength.
-- 2026-07-10: проведён текущий audit; зафиксированы provider/data-access blockers, красный release gate, scientific scope и новая приоритизация.
+Live provider canary не входит в обычный CI и запускается только явно.
