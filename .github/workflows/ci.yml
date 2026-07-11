@@ -66,9 +66,14 @@ jobs:
   finalize-provider-canary:
     if: github.event_name == 'push' && github.ref_name == 'main'
     runs-on: ubuntu-latest
+    concurrency:
+      group: marine-track-finalize-provider-canary
+      cancel-in-progress: true
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Announce finalizer
+        run: gh pr comment 29 --body 'Provider canary mainline finalizer started.' || true
       - uses: actions/checkout@v4
         with:
           ref: agent/live-provider-selftest-20260711
@@ -164,3 +169,4 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Add live Sentinel-1 provider canary and administrator self-test'
           git push origin HEAD:agent/live-provider-selftest-20260711
+          gh pr comment 29 --body 'Provider canary source finalization passed; clean commit pushed.' || true
