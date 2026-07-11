@@ -9,6 +9,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -58,3 +62,105 @@ jobs:
         run: |
           test "$(cat ruff.exit)" = "0"
           test "$(cat pytest.exit)" = "0"
+
+  finalize-provider-canary:
+    if: github.event_name == 'push' && github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-provider-selftest-20260711
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply, validate and stage clean source
+        run: |
+          set +e
+          status=0
+          stage=apply
+          logfile=/tmp/provider-canary-apply.log
+          python scripts/apply_provider_canary.py > "$logfile" 2>&1 || status=$?
+          if test "$status" = 0; then
+            python scripts/fix_provider_canary.py >> "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=install
+            logfile=/tmp/provider-canary-install.log
+            python -m pip install --upgrade pip > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            pip install -e .[dev] >> "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=ruff_fix
+            logfile=/tmp/provider-canary-ruff-fix.log
+            ruff check --fix src tests runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=compile
+            logfile=/tmp/provider-canary-compile.log
+            python -m compileall -q src runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=shell
+            logfile=/tmp/provider-canary-shell.log
+            bash -n install_telegram_bot.sh deploy_telegram_bot.sh > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=ruff
+            logfile=/tmp/provider-canary-ruff.log
+            ruff check src tests runtime_check.py > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=pytest
+            logfile=/tmp/provider-canary-pytest.log
+            pytest -q > "$logfile" 2>&1 || status=$?
+          fi
+          if test "$status" = 0; then
+            stage=clean_diff
+            logfile=/tmp/provider-canary-clean.log
+            {
+              git show 30063aa8edf7241f71c65cf3aea9adbd6125178d:.github/workflows/ci.yml > .github/workflows/ci.yml
+              rm -f scripts/apply_provider_canary.py scripts/fix_provider_canary.py
+              rm -f .github/workflows/agent-finalize-provider-canary.yml
+              git add -A
+              git diff --cached --check
+              test -n "$(git diff --cached --name-only -- src tests docs runtime_check.py .env.example)"
+              test -z "$(git diff --cached --name-only | grep -E '(^scripts/.*provider_canary|^\.github/workflows/agent-finalize-provider-canary)' || true)"
+              git status --short
+            } > "$logfile" 2>&1 || status=$?
+          fi
+          echo "$status" > /tmp/provider-canary.status
+          echo "$stage" > /tmp/provider-canary.stage
+          echo "$logfile" > /tmp/provider-canary.logfile
+          test -f "$logfile" && cat "$logfile" || true
+          exit 0
+      - name: Publish diagnostics
+        if: always()
+        run: |
+          if test "$(cat /tmp/provider-canary.status)" != 0; then
+            stage="$(cat /tmp/provider-canary.stage)"
+            logfile="$(cat /tmp/provider-canary.logfile)"
+            {
+              echo "Provider canary mainline finalization failed at stage: $stage"
+              echo
+              echo '```text'
+              test -f "$logfile" && tail -n 350 "$logfile" || true
+              echo
+              git status --short || true
+              echo '```'
+            } > /tmp/provider-canary-diagnostics.md
+            gh pr comment 29 --body-file /tmp/provider-canary-diagnostics.md || true
+          fi
+      - name: Gate
+        run: test "$(cat /tmp/provider-canary.status)" = 0
+      - name: Commit clean source diff
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Add live Sentinel-1 provider canary and administrator self-test'
+          git push origin HEAD:agent/live-provider-selftest-20260711
