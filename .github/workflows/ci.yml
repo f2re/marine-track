@@ -41,13 +41,28 @@ jobs:
           echo "$status" > pytest.exit
           cat pytest.txt
           exit 0
-      - name: Type check
+      - name: Type check without baseline growth
         run: |
+          git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+          git worktree prune
+          rm -rf /tmp/marine-track-main
+          git worktree add --detach /tmp/marine-track-main refs/remotes/origin/main
           set +e
+          (
+            cd /tmp/marine-track-main
+            mypy --config-file "$GITHUB_WORKSPACE/pyproject.toml" --no-incremental src
+          ) > "$GITHUB_WORKSPACE/mypy-main.txt" 2>&1
+          echo "$?" > "$GITHUB_WORKSPACE/mypy-main.exit"
           mypy --no-incremental src > mypy.txt 2>&1
+          echo "$?" > mypy-current.exit
+          python scripts/check_mypy_no_growth.py \
+            --baseline mypy-main.txt \
+            --current mypy.txt > mypy-baseline.txt 2>&1
           status=$?
           echo "$status" > mypy.exit
+          cat mypy-main.txt
           cat mypy.txt
+          cat mypy-baseline.txt
           exit 0
       - name: Package build
         run: |
@@ -81,7 +96,11 @@ jobs:
             ruff.exit
             pytest.txt
             pytest.exit
+            mypy-main.txt
+            mypy-main.exit
             mypy.txt
+            mypy-current.exit
+            mypy-baseline.txt
             mypy.exit
             build.txt
             build.exit
