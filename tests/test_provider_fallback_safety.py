@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -67,12 +68,19 @@ def _clear_provider_credentials(monkeypatch) -> None:
 
 
 def _write_aoi(path, west: float, south: float, east: float, north: float) -> None:
-    path.write_text(
-        "{\"type\":\"Polygon\",\"coordinates\":[[["
-        f"{west},{south}],[{east},{south}],[{east},{north}],[{west},{north}],[{west},{south}"
-        "]]}",
-        encoding="utf-8",
-    )
+    payload = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [west, south],
+                [east, south],
+                [east, north],
+                [west, north],
+                [west, south],
+            ]
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def test_credential_preflight_requires_complete_optional_pairs(monkeypatch) -> None:
