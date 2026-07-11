@@ -25,6 +25,7 @@ ACTION_DATES_LAST_BBOX = "dates_last_bbox"
 ACTION_AREAS = "areas"
 ACTION_OUTPUT_MODE = "output_mode"
 ACTION_CALIBRATION = "calibration"
+ACTION_SELFTEST = "selftest"
 ACTION_MENU = "menu"
 ACTION_STATUS = "status"
 ACTION_HELP = "help"
@@ -89,7 +90,11 @@ def main_menu_markup(
                 InlineKeyboardButton(
                     f"{marker}🧪 Калибровка",
                     callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_CALIBRATION}",
-                )
+                ),
+                InlineKeyboardButton(
+                    "🩺 Self-test",
+                    callback_data=f"{MENU_CALLBACK_PREFIX}:{ACTION_SELFTEST}",
+                ),
             ]
         )
     rows.append(
@@ -153,7 +158,8 @@ def help_text() -> str:
         "<code>/areas</code> — список сохранённых районов.\n"
         "<code>/detect token</code> — повторить обработку сохранённой сцены.\n"
         "<code>/image token</code> — preview сцены.\n"
-        "<code>/calibrate</code> — интерфейс разметки для администратора.\n\n"
+        "<code>/calibrate</code> — интерфейс разметки для администратора.\n"
+        "<code>/selftest</code> — live Sentinel-1 provider/asset self-test для администратора.\n\n"
         "<b>Формат bbox</b>\n"
         "<code>west south east north</code>, координаты WGS84."
     )

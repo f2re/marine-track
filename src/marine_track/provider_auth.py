@@ -37,6 +37,30 @@ def bearer_headers(token: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+def cdse_credentials_configured() -> bool:
+    """Return whether CDSE raster OAuth can be attempted without network I/O."""
+
+    if env_first("CDSE_ACCESS_TOKEN"):
+        return True
+    username = env_first("CDSE_USERNAME")
+    password = env_first("CDSE_PASSWORD")
+    if username and password:
+        return True
+    client_id = env_first("CDSE_CLIENT_ID")
+    client_secret = env_first("CDSE_CLIENT_SECRET")
+    return bool(client_id and client_secret)
+
+
+def sentinelhub_credentials_configured() -> bool:
+    """Return whether Sentinel Hub OAuth can be attempted without network I/O."""
+
+    if env_first("SENTINELHUB_ACCESS_TOKEN", "SH_ACCESS_TOKEN"):
+        return True
+    client_id = env_first("SENTINELHUB_CLIENT_ID", "SH_CLIENT_ID")
+    client_secret = env_first("SENTINELHUB_CLIENT_SECRET", "SH_CLIENT_SECRET")
+    return bool(client_id and client_secret)
+
+
 def request_json(
     url: str,
     method: str = "GET",

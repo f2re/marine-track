@@ -6,6 +6,9 @@ from pathlib import Path
 
 from marine_track.models import Sensor
 
+DEFAULT_DETECTION_SIDE_KM = 16
+MAX_DEFAULT_DETECTION_SIDE_KM = 19
+
 
 @dataclass(frozen=True)
 class TelegramBotConfig:
@@ -25,6 +28,8 @@ class TelegramBotConfig:
     calibration_min_positive: int = 5
     calibration_min_negative: int = 5
     calibration_crop_size_px: int = 768
+    detection_job_timeout_s: int = 300
+    default_detection_side_km: int = DEFAULT_DETECTION_SIDE_KM
 
 
 def parse_admin_ids(raw: str | None) -> set[int]:
@@ -120,5 +125,14 @@ def load_telegram_config() -> TelegramBotConfig:
         calibration_min_negative=calibration_min_negative,
         calibration_crop_size_px=env_int(
             "MARINE_TRACK_CALIBRATION_CROP_SIZE_PX", 768, 384, 1200
+        ),
+        detection_job_timeout_s=env_int(
+            "MARINE_TRACK_DETECTION_JOB_TIMEOUT_S", 300, 10, 3600
+        ),
+        default_detection_side_km=env_int(
+            "MARINE_TRACK_DEFAULT_DETECTION_SIDE_KM",
+            DEFAULT_DETECTION_SIDE_KM,
+            1,
+            MAX_DEFAULT_DETECTION_SIDE_KM,
         ),
     )

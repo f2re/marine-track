@@ -32,6 +32,7 @@ CORE_MODULES = (
     "marine_track.processing_config",
     "marine_track.resource_limits",
     "marine_track.sensor_preprocessing",
+    "marine_track.provider_canary",
     "marine_track.provenance",
     "marine_track.calibration",
     "marine_track.calibration_areas",
@@ -45,6 +46,7 @@ CORE_MODULES = (
     "marine_track.telegram_calibration_areas",
     "marine_track.telegram_calibration_phase2",
     "marine_track.telegram_detection",
+    "marine_track.telegram_selftest",
     "marine_track.telegram_ui",
     "marine_track.telegram_user_state",
     "marine_track.smoke_check",
@@ -156,6 +158,9 @@ def check_paths() -> list[str]:
         errors.append(
             f"calibration context GeoJSON not found: {project_path(calibration_context)}"
         )
+    canary_aoi = os.getenv("MARINE_TRACK_CANARY_AOI", "").strip()
+    if canary_aoi and not project_path(canary_aoi).is_file():
+        errors.append(f"canary AOI GeoJSON not found: {project_path(canary_aoi)}")
     local_track_csv = os.getenv("MARINE_TRACK_AIS_CSV", "").strip()
     if local_track_csv and not project_path(local_track_csv).is_file():
         errors.append(f"local vessel track CSV not found: {project_path(local_track_csv)}")
@@ -186,6 +191,10 @@ def env_flag(name: str) -> bool | None:
     return None
 
 
+def env_present(name: str) -> bool:
+    return bool(os.getenv(name, "").strip())
+
+
 def check_telegram_env(env_file: Path | None = None) -> list[str]:
     errors: list[str] = []
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -212,6 +221,37 @@ def check_telegram_env(env_file: Path | None = None) -> list[str]:
             "Telegram access is fail-closed: set TELEGRAM_ADMIN_IDS or explicitly "
             "set MARINE_TRACK_ALLOW_PUBLIC_BOT=1"
         )
+    return errors
+
+
+def check_optional_provider_credentials() -> list[str]:
+    errors: list[str] = []
+    sentinel_access = env_present("SENTINELHUB_ACCESS_TOKEN") or env_present("SH_ACCESS_TOKEN")
+    if not sentinel_access:
+        sentinel_id = env_present("SENTINELHUB_CLIENT_ID")
+        sentinel_secret = env_present("SENTINELHUB_CLIENT_SECRET")
+        if sentinel_id != sentinel_secret:
+            errors.append(
+                "Sentinel Hub OAuth is incomplete: set both SENTINELHUB_CLIENT_ID and "
+                "SENTINELHUB_CLIENT_SECRET, or leave both empty"
+            )
+        alias_id = env_present("SH_CLIENT_ID")
+        alias_secret = env_present("SH_CLIENT_SECRET")
+        if alias_id != alias_secret:
+            errors.append(
+                "Sentinel Hub SH_* OAuth aliases are incomplete: set both values, or leave both empty"
+            )
+
+    if not env_present("CDSE_ACCESS_TOKEN"):
+        username = env_present("CDSE_USERNAME")
+        password = env_present("CDSE_PASSWORD")
+        if username != password:
+            errors.append(
+                "CDSE password OAuth is incomplete: set both CDSE_USERNAME and CDSE_PASSWORD, "
+                "or leave both empty"
+            )
+        if env_present("CDSE_CLIENT_SECRET") and not env_present("CDSE_CLIENT_ID"):
+            errors.append("CDSE_CLIENT_SECRET is set without CDSE_CLIENT_ID")
     return errors
 
 
@@ -261,6 +301,24 @@ def check_feature_flags() -> list[str]:
     return errors
 
 
+def check_detection_runtime_bounds() -> list[str]:
+    errors: list[str] = []
+    bounds = (
+        ("MARINE_TRACK_DEFAULT_DETECTION_SIDE_KM", 16.0, 1.0, 19.0),
+        ("MARINE_TRACK_MAX_DETECTION_AOI_AREA_KM2", 400.0, 1.0, 25000.0),
+        ("MARINE_TRACK_DETECTION_JOB_TIMEOUT_S", 300.0, 10.0, 3600.0),
+    )
+    for name, default, minimum, maximum in bounds:
+        raw = os.getenv(name, str(default)).strip()
+        try:
+            value = float(raw)
+        except ValueError:
+            continue  # check_numeric_env reports the concrete parse error.
+        if not math.isfinite(value) or not minimum <= value <= maximum:
+            errors.append(f"{name} must be finite and in [{minimum:g}, {maximum:g}]")
+    return errors
+
+
 def check_numeric_env() -> list[str]:
     errors: list[str] = []
     float_names = {
@@ -272,7 +330,10 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_DETECTION_MIN_CONTRAST_SIGMA",
         "MARINE_TRACK_CFAR_MIN_TRAINING_FRACTION",
         "MARINE_TRACK_MAX_AOI_AREA_KM2",
+        "MARINE_TRACK_MAX_DETECTION_AOI_AREA_KM2",
         "MARINE_TRACK_RASTER_LOCK_TIMEOUT_S",
+        "MARINE_TRACK_CANARY_SIDE_KM",
+        "MARINE_TRACK_CANARY_MAX_AREA_KM2",
     }
     names = (
         "MARINE_TRACK_DEFAULT_LOOKBACK_HOURS",
@@ -289,8 +350,21 @@ def check_numeric_env() -> list[str]:
         "MARINE_TRACK_DETECTION_TILE_SIZE_PX",
         "MARINE_TRACK_DETECTION_TILE_OVERLAP_PX",
         "MARINE_TRACK_NORMALIZATION_SAMPLE_PIXELS",
+        "MARINE_TRACK_DEFAULT_DETECTION_SIDE_KM",
+        "MARINE_TRACK_MAX_DETECTION_AOI_AREA_KM2",
+        "MARINE_TRACK_DETECTION_JOB_TIMEOUT_S",
+        "MARINE_TRACK_GDAL_HTTP_CONNECT_TIMEOUT_S",
+        "MARINE_TRACK_GDAL_HTTP_TIMEOUT_S",
+        "MARINE_TRACK_GDAL_HTTP_LOW_SPEED_LIMIT_BPS",
+        "MARINE_TRACK_GDAL_HTTP_LOW_SPEED_TIME_S",
+        "MARINE_TRACK_GDAL_HTTP_MAX_RETRY",
+        "MARINE_TRACK_GDAL_HTTP_RETRY_DELAY_S",
         "MARINE_TRACK_S1_LEE_WINDOW_PX",
         "MARINE_TRACK_RASTER_LOCK_TIMEOUT_S",
+        "MARINE_TRACK_CANARY_LOOKBACK_HOURS",
+        "MARINE_TRACK_CANARY_MAX_RESULTS",
+        "MARINE_TRACK_CANARY_SIDE_KM",
+        "MARINE_TRACK_CANARY_MAX_AREA_KM2",
         "MARINE_TRACK_MAX_AOI_AREA_KM2",
         "MARINE_TRACK_MAX_AOI_VERTICES",
         "MARINE_TRACK_MAX_RASTER_PIXELS",
@@ -337,8 +411,10 @@ def main() -> int:
         check_imports()
         + check_paths()
         + check_telegram_env(env_file)
+        + check_optional_provider_credentials()
         + check_processing_config()
         + check_feature_flags()
+        + check_detection_runtime_bounds()
         + check_numeric_env()
     )
     profile = os.getenv("MARINE_TRACK_PROVIDER_PROFILE", "all").strip().lower()

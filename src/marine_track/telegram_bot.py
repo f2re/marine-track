@@ -57,6 +57,9 @@ from marine_track.telegram_scene_browser import (
 from marine_track.telegram_scene_browser import (
     scene_page_callback as scene_scene_page_callback,
 )
+from marine_track.telegram_selftest import SELFTEST_CALLBACK_PREFIX
+from marine_track.telegram_selftest import selftest_callback as admin_selftest_callback
+from marine_track.telegram_selftest import selftest_command as admin_selftest_command
 from marine_track.telegram_ui import (
     ACTION_AREAS,
     ACTION_CALIBRATION,
@@ -67,6 +70,7 @@ from marine_track.telegram_ui import (
     ACTION_HELP,
     ACTION_MENU,
     ACTION_OUTPUT_MODE,
+    ACTION_SELFTEST,
     ACTION_STATUS,
     ACTION_WHOAMI,
     AREA_CALLBACK_PREFIX,
@@ -248,6 +252,11 @@ async def calibrate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await admin_calibration_command(update, context, get_config())
 
 
+async def selftest_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with get_semaphore():
+        await admin_selftest_command(update, context, get_config())
+
+
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not query or not query.data:
@@ -286,6 +295,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if action == ACTION_CALIBRATION:
         await admin_calibration_command(update, context, get_config())
+        return
+    if action == ACTION_SELFTEST:
+        async with get_semaphore():
+            await admin_selftest_command(update, context, get_config())
         return
     if action == ACTION_OUTPUT_MODE:
         if not await require_authorized(update):
@@ -436,6 +449,11 @@ async def calibration_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await admin_calibration_callback(update, context, get_config())
 
 
+async def selftest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with get_semaphore():
+        await admin_selftest_callback(update, context, get_config())
+
+
 async def notify_admins_on_startup(application: Application) -> None:
     config = get_config()
     if not config.admin_ids or not startup_calibration_required(config):
@@ -465,6 +483,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("areas", areas_command))
     app.add_handler(CommandHandler("output", output_command))
     app.add_handler(CommandHandler("calibrate", calibrate_command))
+    app.add_handler(CommandHandler("selftest", selftest_command))
     app.add_handler(CommandHandler("dates", dates_command))
     app.add_handler(CommandHandler("bboxdates", bboxdates_command))
     app.add_handler(CommandHandler("image", image_command))
@@ -474,6 +493,7 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(output_callback, pattern=f"^{OUTPUT_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(area_callback, pattern=f"^{AREA_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(calibration_callback, pattern=f"^{CALIBRATION_CALLBACK_PREFIX}:"))
+    app.add_handler(CallbackQueryHandler(selftest_callback, pattern=f"^{SELFTEST_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(scene_scene_page_callback, pattern=f"^{PAGE_CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(image_callback, pattern=f"^{CALLBACK_PREFIX}:"))
     app.add_handler(CallbackQueryHandler(detect_callback, pattern=f"^{DETECT_CALLBACK_PREFIX}:"))

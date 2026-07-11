@@ -1,201 +1,180 @@
 # Marine Track
 
-Marine Track — MVP-система для поиска спутниковых сцен по акватории и формирования геопривязанных кандидатов судов с отправкой результатов в Telegram.
-
-Текущий pipeline:
+Marine Track ищет спутниковые сцены по морской акватории и формирует геопривязанные `vessel_candidate` для последующей проверки оператором.
 
 ```text
-AOI или bbox → кешированный поиск Sentinel-сцен → processable GeoTIFF/COG → AOI crop → land/shoreline mask → local-CFAR-style candidate detector → wake/AIS enrichment → overview/crops → GeoJSON/CSV/Parquet/report.json → Telegram
+AOI + UTC interval
+→ provider search
+→ typed processable raster asset
+→ runtime signing/OAuth when required
+→ materialization and AOI crop
+→ sensor-aware preprocessing
+→ candidate detector
+→ optional AIS/wake research evidence
+→ GeoJSON/CSV/Parquet/report/PNG
+→ Telegram
 ```
 
-## Основное правило установки
+Результат не является гарантированной детекцией судна. `ranking_score` и `evidence_score` не являются вероятностью. До независимой калибровки и benchmark каждый объект называется `vessel_candidate`.
 
-В проекте поддерживаются только два эксплуатационных shell-скрипта:
+## Operational baseline
+
+Основной operational single-raster path — Sentinel-1. Sentinel-2 single-band, Hough/wake и Kelvin speed остаются research paths и по умолчанию выключены.
+
+Для одной спутниковой сцены оперативная скорость по умолчанию имеет вид:
+
+```json
+{"speed": {"value_knots": null, "method": "not_estimated"}}
+```
+
+AIS хранится как внешний reference после временного и пространственного QC. AIS SOG/COG не заменяет собственную спутниковую оценку. Kelvin wavelength/speed — только research proxy с applicability/QC/uncertainty.
+
+## Доступ к сценам
+
+Для Sentinel-1 candidate detection порядок источников начинается с Planetary Computer. Этот path не требует пользовательского provider token: приложение получает публичный STAC asset и выполняет transient runtime signing. Подписанный URL не сохраняется в registry, report или log.
+
+CDSE и Sentinel Hub являются дополнительными OAuth-провайдерами. При пустых credentials они отключаются до сетевого OAuth-вызова и не блокируют Planetary Computer fallback.
+
+```dotenv
+# Optional CDSE
+CDSE_ACCESS_TOKEN=
+CDSE_CLIENT_ID=cdse-public
+CDSE_CLIENT_SECRET=
+CDSE_USERNAME=
+CDSE_PASSWORD=
+
+# Optional Sentinel Hub
+SENTINELHUB_ACCESS_TOKEN=
+SENTINELHUB_CLIENT_ID=
+SENTINELHUB_CLIENT_SECRET=
+```
+
+Install/deploy выполняются неинтерактивно и не запрашивают provider secrets. Это исключает зависимость автоматического deploy от внешнего OAuth и предотвращает случайную печать секретов. Неполная Sentinel Hub или CDSE username/password конфигурация отклоняется runtime/deploy preflight.
+
+Внешняя доступность каталога, signing endpoint, CDN, quota и конкретного raster asset не может быть гарантирована приложением. При недоступности возвращается typed failure; production flow не подменяет его фиктивными данными или «0 кандидатов».
+
+## Ограничение долгих операций
+
+Telegram detection запускается в отдельном spawned worker process. По умолчанию:
+
+```dotenv
+MARINE_TRACK_DEFAULT_DETECTION_SIDE_KM=16
+MARINE_TRACK_MAX_DETECTION_AOI_AREA_KM2=400
+MARINE_TRACK_DETECTION_JOB_TIMEOUT_S=300
+MARINE_TRACK_GDAL_HTTP_CONNECT_TIMEOUT_S=10
+MARINE_TRACK_GDAL_HTTP_TIMEOUT_S=45
+MARINE_TRACK_GDAL_HTTP_LOW_SPEED_LIMIT_BPS=1024
+MARINE_TRACK_GDAL_HTTP_LOW_SPEED_TIME_S=30
+MARINE_TRACK_GDAL_HTTP_MAX_RETRY=2
+```
+
+Кнопка поиска кандидатов вырезает компактный сектор из default AOI. Пользовательский oversized bbox отклоняется до provider/raster I/O. При превышении wall-clock limit зависший native GDAL/rasterio worker завершается, а Telegram получает явную ошибку вместо бесконечного progress state.
+
+## Установка без Docker
+
+Поддерживаются только `install_telegram_bot.sh`, `deploy_telegram_bot.sh`, systemd и versioned releases.
 
 ```bash
-bash install_telegram_bot.sh --providers all
-bash deploy_telegram_bot.sh --providers all
+cd ~/marine-track
+sudo bash install_telegram_bot.sh --prepare-only
+sudoedit /etc/marine-track/marine-track.env
+sudo bash deploy_telegram_bot.sh
 ```
 
-Все прежние wrapper/fix/helper scripts удалены из рабочего пути. Их логика встроена в `deploy_telegram_bot.sh`: установка provider extras, Telegram `getMe` healthcheck, provider preflight, одноразовая подготовка land mask, cleanup, регистрация Telegram-команд и рестарт systemd.
+Минимально заполните:
 
-## Release gate
-
-Перед расширением алгоритмов и новых источников проект должен пройти `docs/RELEASE_GATE.md`: bash syntax, pytest, ruff, clean install, deploy, systemd, Telegram `/start`, `/dates`, `/detectbbox`, land-mask/cache checks.
-
-Пока release gate v0.2 не закрыт на сервере, не добавлять новые providers, Sentinel-2 full stack и ASF ZIP/GRD processing.
-
-Актуальный технический и научный аудит: [`docs/AUDIT_2026-07-10.md`](docs/AUDIT_2026-07-10.md). На 2026-07-10 локальный gate не закрыт: 77 тестов проходят, 4 падают; `ruff` сообщает 2 import errors; `mypy --no-incremental` — 74 ошибки. Дополнительно найдены P0-дефекты search-cache correctness, fail-open Telegram authorization и user isolation. До их исправления бот нельзя считать безопасным публичным сервисом.
-
-## Что уже реализовано
-
-- Telegram bot `marine-track-bot`.
-- Главное inline-меню: `Найти суда`, `Сроки снимков`, `Повторить район`, `Сроки района`, `Мои районы`, `Выдача`, `Статус`, `Помощь`, `Мой ID`.
-- Быстрый сценарий без ручного token: default AOI → первая возвращённая detection-capable сцена → candidate detection → файлы. Детерминированный выбор действительно самой свежей сцены остаётся P0-задачей.
-- Сохраненные bbox пользователя: `/bboxdates` и `/detectbbox` сохраняют до 10 районов для повторного запуска кнопками.
-- Slash-команды `/start`, `/menu`, `/help`, `/dates`, `/bboxdates`, `/areas`, `/output`, `/image`, `/detect`, `/detectbbox`, `/status`, `/whoami`.
-- `scene_registry.json`: token сцены, provider, sensor, assets, AOI geometry.
-- Пагинация списка сцен: кнопки `◀️ Назад` и `▶️ Далее` перелистывают локально сохраненный результат без нового provider API search.
-- Progress states в Telegram для долгой детекции: search → materialize → detect → render → send.
-- Режим выдачи результата per-user: только картинки, только файлы или всё.
-- Реальные scene providers: ASF, Copernicus CDSE STAC, Planetary Computer STAC, Sentinel Hub Catalog, EarthSearch STAC.
-- Auxiliary providers: Copernicus Marine toolbox, local AIS CSV, NOAA MarineCadastre daily archives.
-- Provider profiles: `all`, `scene`, `aux`, `core`.
-- TTL-кеш scene-search, чтобы минимизировать STAC/provider API calls; текущий key не различает абсолютные time windows и search/detection capability, поэтому cache пока не считается корректным.
-- Общий raster cache: один и тот же product/asset/AOI не скачивается повторно.
-- Автоматическая сборка land/shoreline mask из URL или локального ZIP/SHP/GeoJSON.
-- Local-CFAR-style candidate detector с physical scale, local contrast и shape metrics; `confidence` — ranking score, не вероятность.
-- Экспериментальная wake-axis association через Canny+Hough; heading сохраняется с флагом неоднозначности 180° и не является подтверждённым курсом без QC.
-- Experimental wake speed proxy по cross-axis profile peaks и deep-water Kelvin approximation; не является оперативной скоростью.
-- AIS enrichment: интерполированный reference track point, MMSI/distance/SOG/COG в validation/metadata и AIS overlay.
-- Overview PNG с точками/номерами кандидатов, wake axis и AIS track при наличии.
-- Crop PNG по каждому кандидату, включая wake-axis и AIS-track overlay при наличии.
-- Вывод GeoJSON, CSV, Parquet и `report.json`.
-
-## Что пока не реализовано
-
-- Lock-файлы для конкурентного скачивания одного raster asset.
-- Полный cache key/capability revalidation и deterministic newest-scene selection.
-- Fail-closed Telegram authorization, user-scoped scene tokens, quotas и atomic state writes.
-- Актуальный CDSE STAC v1 provider contract и OData fallback.
-- Typed asset/auth/sidecar contract и secret-redacted provenance.
-- Калиброванный vessel detector, benchmark, uncertainty и физическая validation.
-- Интеграция effective `config/processing.yaml` в CLI/Telegram pipeline.
-- Правильный guard-cell CFAR и sensor-specific S1/S2 preprocessing.
-- Полноценный Sentinel-2 band stack B02/B03/B04/B08 + SCL/cloud/water mask.
-- Обработка ASF ZIP/GRD через SNAP/pyroSAR.
-
-Уточнённое ТЗ, план и каталог синтезированных признаков: [`docs/TECHNICAL_SPEC.md`](docs/TECHNICAL_SPEC.md), [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md), [`docs/FEATURE_CATALOG.md`](docs/FEATURE_CATALOG.md).
-
-## Установка на сервер
-
-```bash
-git clone https://github.com/f2re/marine-track.git
-cd marine-track
-TELEGRAM_BOT_TOKEN='<bot-token>' TELEGRAM_ADMIN_IDS='<your-telegram-id>' bash install_telegram_bot.sh --providers all --yes
+```dotenv
+TELEGRAM_BOT_TOKEN=<bot-token>
+TELEGRAM_ADMIN_IDS=<numeric-telegram-user-id>
+MARINE_TRACK_PROVIDER_PROFILE=all
 ```
 
-Интерактивно, с запросом Telegram token:
+`TELEGRAM_ADMIN_IDS` обязателен при стандартном fail-closed режиме. Публичный доступ разрешается только явным `MARINE_TRACK_ALLOW_PUBLIC_BOT=1`.
 
-```bash
-bash install_telegram_bot.sh --providers all
-```
-
-Provider-доступы задаются через `/opt/marine_track/.env` или environment; deploy выполняет только offline import/config preflight. Он не подтверждает сеть, auth, quota, подписание или чтение raster; для operational release нужен отдельный live range-read canary.
-
-Профили provider-зависимостей:
+Canonical paths:
 
 ```text
-all    = core + scene providers + auxiliary providers
-scene  = core + ASF/STAC/Planetary Computer/Sentinel Hub
-aux    = core + Copernicus Marine
-core   = только core; provider-пакеты не ставятся
+/etc/marine-track/marine-track.env   environment, root:marine-track, 0640
+/opt/marine_track/releases/          versioned immutable releases
+/opt/marine_track/current            active release symlink
+/opt/marine_track/previous           rollback target
+/var/lib/marine-track/output         persistent state and outputs
+/var/cache/marine-track              persistent cache
 ```
 
-Проверка статуса:
+Deploy сохраняет environment, state, cache и runs вне release directory; создаёт staging venv; выполняет compile/runtime/smoke/health checks; атомарно переключает `current`; после неуспешной post-switch проверки выполняет rollback.
+
+После обновления `main`:
 
 ```bash
-bash install_telegram_bot.sh --status
-sudo systemctl status marine-track-bot.service --no-pager
-sudo journalctl -u marine-track-bot.service -n 100 --no-pager
+cd ~/marine-track
+git pull --ff-only origin main
+sudo bash deploy_telegram_bot.sh
+sudo systemctl status marine-track.service --no-pager
 ```
 
-Локальный smoke-check без запуска polling:
+## Telegram
 
-```bash
-cd /opt/marine_track
-sudo -u marinetrack .venv/bin/python -m marine_track.smoke_check --base-dir /opt/marine_track --env-file /opt/marine_track/.env
-```
-
-## Деплой после `git pull`
-
-```bash
-git pull
-bash deploy_telegram_bot.sh --providers all --yes
-```
-
-Интерактивный деплой с запросом Telegram token, если он пустой:
-
-```bash
-git pull
-bash deploy_telegram_bot.sh --providers all
-```
-
-При изменении системных geospatial-зависимостей:
-
-```bash
-bash deploy_telegram_bot.sh --install-system-packages --providers all --yes
-```
-
-Чтобы пропустить provider-пакеты:
-
-```bash
-bash deploy_telegram_bot.sh --providers core --yes
-```
-
-## AIS enrichment
-
-AIS enrich работает, если задан локальный CSV:
+Основные команды и сценарии:
 
 ```text
-MARINE_TRACK_AIS_CSV=/path/to/ais.csv
-MARINE_TRACK_AIS_MATCH_WINDOW_MIN=30
-MARINE_TRACK_AIS_TRACK_WINDOW_MIN=60
-MARINE_TRACK_AIS_MAX_DISTANCE_M=3000
+/start, /menu, /help
+/dates, /bboxdates, /areas
+/detect, /detectbbox
+/output, /status, /whoami
+/selftest                    administrator only
 ```
 
-Формат CSV:
+Scene token, callback и state привязаны к user/chat. Telegram access fail-closed. Выдача может включать overview/crops и GeoJSON/CSV/Parquet/redacted report.
 
-```text
-mmsi,time,lon,lat,sog_knots,cog_deg
-```
+`/selftest` не запускается при deploy, restart или обычном healthcheck. Asset mode выполняет compact AOI → search → typed asset → runtime access → небольшой TIFF range-read. Detection mode требует отдельного подтверждения и оставляет wake/Kelvin выключенными. Подробности: [`docs/PROVIDER_CANARY.md`](docs/PROVIDER_CANARY.md).
 
-При совпадении detection ↔ AIS текущий бот пишет `validation_status=ais_matched`, добавляет `validation.ais`, сохраняет AIS track в `metadata.ais.track`, рисует AIS track на overview/crop и может заполнить общие speed/heading. Это зафиксированный P0 semantic debt: целевая схема хранит AIS только в `reference.ais.*`, отдельно от спутниковой оценки и Kelvin proxy.
-
-## Telegram workflow
-
-Основной сценарий:
-
-```text
-/start → 🔎 Найти суда → progress states → результат
-```
-
-Перед детекцией можно выбрать режим выдачи:
-
-```text
-/output
-📤 Выдача
-```
-
-Доступные режимы:
-
-```text
-🖼 Картинки  overview.png и crop судов
-📄 Файлы     GeoJSON, CSV, Parquet, report.json
-🧾 Всё       картинки и файлы
-```
-
-## Что делает `deploy_telegram_bot.sh`
-
-1. Копирует текущий checkout в `/opt/marine_track`, не перетирая `.env`, `.venv`, `runs` и сгенерированный land mask.
-2. Синхронизирует новые ключи из `.env.example` в `/opt/marine_track/.env`.
-3. Запрашивает или принимает через environment `TELEGRAM_BOT_TOKEN` и `TELEGRAM_ADMIN_IDS`.
-4. Ставит пакет с нужными extras: `.[providers]`, `.[scene-providers]`, `.[aux-providers]` или core.
-5. Один раз собирает land mask, если `MARINE_TRACK_AUTO_UPDATE_LAND_MASK=1`, mask-файл отсутствует и `MARINE_TRACK_FORCE_UPDATE_LAND_MASK=0`.
-6. Выполняет cleanup старых кешей/output-файлов по retention.
-7. Запускает `runtime_check.py`.
-8. Выполняет provider preflight без сетевых запросов.
-9. Проверяет Telegram token через `getMe`.
-10. Регистрирует Telegram-команды.
-11. Перезапускает `marine-track-bot.service`.
-
-Если `TELEGRAM_BOT_TOKEN` пустой или неверный, deploy падает до рестарта сервиса.
-
-Recovery для пустого или неверного token:
+## Локальные проверки
 
 ```bash
-sudoedit /opt/marine_track/.env
-sudo chown root:marinetrack /opt/marine_track/.env
-sudo chmod 0640 /opt/marine_track/.env
-bash deploy_telegram_bot.sh --providers all --yes
+bash -n install_telegram_bot.sh
+bash -n deploy_telegram_bot.sh
+python -m pytest -q
+ruff check src tests
+mypy --no-incremental src
+python -m build
+TELEGRAM_BOT_TOKEN=ci-placeholder \
+TELEGRAM_ADMIN_IDS=1 \
+MARINE_TRACK_PROVIDER_PROFILE=core \
+python runtime_check.py
 ```
+
+Raw mypy command пока отражает накопленный baseline основного кода. CI дополнительно сравнивает нормализованные fingerprints ошибок с актуальным `main` и запрещает появление или рост ошибок; уменьшение baseline разрешено.
+
+Live provider canary не входит в обычный CI и не запускается автоматически. Его выполняют только явно, при разрешённом внешнем доступе:
+
+```bash
+marine-track provider-canary --mode asset
+# Full materialization/detection only after separate operator decision:
+marine-track provider-canary --mode detection
+```
+
+## Реализованные safety/correctness механизмы
+
+- Typed `SceneAsset` и capability-aware selection: preview/archive/search-only asset не передаётся detector.
+- Hardened scene-search/raster caches, atomic writes, locks, recovery/quarantine и deterministic ordering.
+- Resource limits до дорогих AOI/download/tile/candidate операций.
+- Sentinel-1 preprocessing, valid masks, guard-cell CFAR и tiled inference.
+- Secret/path/query redaction в provenance, canary reports и Telegram detection failures.
+- Atomic systemd release/deploy/rollback с сохранением `.env`, state, cache и output.
+- External AIS reference model; operational speed не подменяется AIS или Kelvin proxy.
+- Research wake evidence отделено от operational candidate detector и выключено по умолчанию.
+
+## Научные ограничения
+
+Проект ещё не имеет независимого стратифицированного benchmark по open sea, coast, port и offshore/high-clutter. Не завершены fixed scene-level split, object/wake labels, calibration split, uncertainty и метрики precision/recall/F1/POD/FAR/CSI/false alarms per km²/localization error. Поэтому нельзя заявлять подтверждённую точность или вероятность обнаружения.
+
+Sentinel-2 нельзя считать operational до поддержки B02/B03/B04/B08 на общей сетке, SCL/cloud/shadow/water/glint masks и отдельной optical calibration.
+
+Технические документы:
+
+- [`docs/TECHNICAL_SPEC.md`](docs/TECHNICAL_SPEC.md)
+- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
+- [`docs/RELEASE_GATE.md`](docs/RELEASE_GATE.md)
+- [`docs/FEATURE_CATALOG.md`](docs/FEATURE_CATALOG.md)
+- [`docs/AUDIT_2026-07-10.md`](docs/AUDIT_2026-07-10.md)
