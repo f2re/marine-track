@@ -27,7 +27,10 @@ PREVIEW_KEY_HINTS = (
     "overview",
     "rendered_preview",
 )
-S1_PRIORITY_HINTS = ("gamma0_vv", "sigma0_vv", "rtc", "vv", "gamma0_vh", "sigma0_vh", "vh")
+# Co-polarized VV is the operational single-band baseline. Keep the generic RTC
+# hint after VV: both dual-pol assets contain ``rtc`` in their URL, and placing it
+# first makes VH/VV tie and accidentally selects VH by lexical key order.
+S1_PRIORITY_HINTS = ("gamma0_vv", "sigma0_vv", "vv", "rtc", "gamma0_vh", "sigma0_vh", "vh")
 S2_PRIORITY_HINTS = ("b08", "b04", "b03", "b02", "visual", "true_color")
 GENERIC_PRIORITY_HINTS = ("cog", "geotiff", "tif", "data", "analytic", "asset")
 TIFF_MEDIA_HINTS = ("image/tiff", "geotiff", "cloud-optimized")

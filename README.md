@@ -382,6 +382,33 @@ sudo find /var/lib/marine-track/output \
   -exec stat -c '%a %U:%G %n' {} \;
 ```
 
+## 🖥️ Локальная веб-консоль без Telegram
+
+Полный операторский flow можно проверить на этой же машине без Telegram, Docker и внешнего веб-сервера:
+
+```bash
+python -m venv --system-site-packages .venv
+.venv/bin/pip install -e '.[scene-providers,dev]'
+.venv/bin/marine-track-local --open
+```
+
+По умолчанию консоль доступна только локально по адресу `http://127.0.0.1:8080`, а результаты сохраняются в `runs/local`. Интерфейс выполняет поиск detection-capable сцен, показывает preview, запускает тот же ограниченный subprocess pipeline и выводит overview, crops, список `vessel_candidate`, GeoJSON, CSV, Parquet и redacted report.
+
+Telegram token для этого режима не читается и не требуется. Параметры запуска:
+
+```dotenv
+# .env загружается автоматически; секреты из shell имеют приоритет.
+CDSE_ACCESS_TOKEN=<temporary-copernicus-access-token>
+MARINE_TRACK_LOCAL_HOST=127.0.0.1
+MARINE_TRACK_LOCAL_PORT=8080
+MARINE_TRACK_LOCAL_OUTPUT_DIR=runs/local
+```
+
+Вместо короткоживущего access token можно указать в том же `.env`
+`CDSE_USERNAME`/`CDSE_PASSWORD` с `CDSE_CLIENT_ID=cdse-public` либо пару
+`CDSE_CLIENT_ID`/`CDSE_CLIENT_SECRET`; приложение само запросит и обновит OAuth token.
+Для другого файла задайте `MARINE_TRACK_ENV_FILE=/path/to/private.env` перед запуском.
+
 ## 🧪 Локальные проверки
 
 ```bash

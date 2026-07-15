@@ -25,7 +25,7 @@ dependencies = [
   "xarray>=2024.1",
   "scipy>=1.10",
   "scikit-image>=0.22",
-  "opencv-python-headless>=4.8",
+  "opencv-python-headless>=4.8,<5",
   "python-telegram-bot>=22,<23",
   "pyarrow>=14.0"
 ]
@@ -58,6 +58,7 @@ dev = [
 marine-track = "marine_track.cli:app"
 marine-track-bot = "marine_track.telegram_bot:main"
 marine-track-health = "marine_track.health:main"
+marine-track-local = "marine_track.local_web:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/marine_track"]

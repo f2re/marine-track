@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Marine Track · локальная консоль</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="scanline" aria-hidden="true"></div>
+  <header class="masthead">
+    <div class="identity">
+      <span class="identity-mark" aria-hidden="true">⌁</span>
+      <div>
+        <p class="eyebrow">Satellite observation console</p>
+        <h1>Marine Track <span>локально</span></h1>
+      </div>
+    </div>
+    <div class="system-state"><i></i> Telegram отключён · pipeline готов</div>
+  </header>
+
+  <main>
+    <aside class="control-panel" aria-labelledby="search-title">
+      <div class="panel-heading">
+        <p class="step-label">01 · Район наблюдения</p>
+        <h2 id="search-title">Найти спутниковые сцены</h2>
+        <p>Укажите небольшой прямоугольный AOI обработки — это не контур всего моря. Один запуск детектора ограничен площадью 400 км².</p>
+      </div>
+
+      <div class="preset-row" aria-label="Готовые районы">
+        <button class="preset" type="button" data-bbox="33.95,43.23,34.11,43.37">Тестовый сектор · центр Чёрного моря</button>
+        <button class="preset" type="button" data-bbox="18.55,54.35,18.72,54.48">Гданьский залив</button>
+        <button class="preset" type="button" data-bbox="29.00,40.90,29.14,41.02">Босфор</button>
+      </div>
+
+      <form id="search-form">
+        <div class="coordinates">
+          <label>West <input name="west" type="number" step="0.0001" required value="33.95"></label>
+          <label>South <input name="south" type="number" step="0.0001" required value="43.23"></label>
+          <label>East <input name="east" type="number" step="0.0001" required value="34.11"></label>
+          <label>North <input name="north" type="number" step="0.0001" required value="43.37"></label>
+        </div>
+        <p id="aoi-metrics" class="aoi-metrics"></p>
+
+        <div class="chart-preview" aria-hidden="true">
+          <span class="chart-lat">N</span><span class="chart-lon">E</span>
+          <div class="aoi-box"><span>AOI CROP</span></div>
+          <div class="radar-sweep"></div>
+        </div>
+
+        <div class="form-row">
+          <label>Сенсор
+            <select name="sensor">
+              <option value="sentinel1" selected>Sentinel-1 · SAR</option>
+              <option value="auto">Автовыбор</option>
+              <option value="sentinel2">Sentinel-2 · эксперимент</option>
+            </select>
+          </label>
+          <label>Период
+            <select name="hours">
+              <option value="24">24 часа</option>
+              <option value="72">3 дня</option>
+              <option value="168" selected>7 дней</option>
+              <option value="336">14 дней</option>
+              <option value="720">30 дней</option>
+            </select>
+          </label>
+        </div>
+
+        <button class="primary-action" type="submit">
+          <span>Запустить поиск</span><b aria-hidden="true">→</b>
+        </button>
+      </form>
+
+      <div class="local-note">
+        <span>LOCAL</span>
+        <p>Результаты остаются на этой машине. В Telegram ничего не отправляется.</p>
+      </div>
+    </aside>
+
+    <section class="workspace" aria-live="polite">
+      <div id="empty-state" class="empty-state">
+        <div class="orbital-diagram" aria-hidden="true"><i></i><i></i><i></i><b></b></div>
+        <p class="step-label">Ожидание задания</p>
+        <h2>Сначала выберите акваторию</h2>
+        <p>Здесь появятся сроки съёмки, preview, найденные кандидаты и готовые файлы.</p>
+      </div>
+
+      <section id="job-panel" class="job-panel hidden">
+        <div class="job-topline">
+          <div><p class="step-label" id="job-kind">Задание</p><h2 id="job-title">Выполняется</h2></div>
+          <span id="job-state" class="state-badge running">RUNNING</span>
+        </div>
+        <div class="progress-track"><i id="progress-bar"></i></div>
+        <p id="job-progress" class="job-progress">Подготовка…</p>
+        <pre id="job-error" class="job-error hidden"></pre>
+      </section>
+
+      <section id="scenes-section" class="content-section hidden">
+        <div class="section-heading">
+          <div><p class="step-label">02 · Архив сцен</p><h2>Доступные снимки</h2></div>
+          <p id="scene-summary" class="section-summary"></p>
+        </div>
+        <div id="scene-list" class="scene-list"></div>
+      </section>
+
+      <section id="result-section" class="content-section hidden">
+        <div class="section-heading">
+          <div><p class="step-label">03 · Candidate detection</p><h2>Результат анализа</h2></div>
+          <p id="result-summary" class="section-summary"></p>
+        </div>
+        <div id="result-content"></div>
+      </section>
+    </section>
+  </main>
+
+  <template id="scene-template">
+    <article class="scene-card">
+      <div class="scene-image-wrap"><div class="image-placeholder">PREVIEW</div><img alt="Спутниковый preview" loading="lazy"></div>
+      <div class="scene-body">
+        <div class="scene-meta"><span class="sensor-chip"></span><time></time></div>
+        <h3></h3>
+        <dl><div><dt>Provider</dt><dd class="provider"></dd></div><div><dt>Режим</dt><dd class="beam"></dd></div><div><dt>Поляризация</dt><dd class="polarization"></dd></div></dl>
+        <button class="detect-action" type="button">Найти кандидатов <span>→</span></button>
+      </div>
+    </article>
+  </template>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

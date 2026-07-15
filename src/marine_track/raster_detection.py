@@ -99,6 +99,7 @@ def detect_candidates_from_raster(
             land_mask_geojson,
             dataset.crs,
             shoreline_buffer_m,
+            raster_bounds=tuple(dataset.bounds),
         )
         normalization_low, normalization_high, sample_count = _normalization_domain(
             dataset,

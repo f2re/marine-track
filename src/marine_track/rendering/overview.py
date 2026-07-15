@@ -7,6 +7,7 @@ import numpy as np
 
 from marine_track.geospatial import lonlat_to_pixel
 from marine_track.models import VesselDetection
+from marine_track.sensor_preprocessing import SensorPreprocessingPlan, read_preprocessed_band
 
 
 def render_overview(
@@ -15,6 +16,7 @@ def render_overview(
     output_png: str | Path,
     title: str,
     max_size_px: int = 1600,
+    preprocessing_plan: SensorPreprocessingPlan | None = None,
 ) -> Path:
     try:
         import rasterio
@@ -30,19 +32,28 @@ def render_overview(
             dataset.height,
             max_size_px,
         )
-        sampled = dataset.read(
-            1,
-            out_shape=(output_height, output_width),
-            out_dtype="float32",
-            masked=True,
-            resampling=Resampling.average,
-        )
-        if np.ma.isMaskedArray(sampled):
-            image = np.asarray(sampled.filled(np.nan), dtype="float32")
+        if preprocessing_plan is None:
+            sampled = dataset.read(
+                1,
+                out_shape=(output_height, output_width),
+                out_dtype="float32",
+                masked=True,
+                resampling=Resampling.average,
+            )
+            if np.ma.isMaskedArray(sampled):
+                image = np.asarray(sampled.filled(np.nan), dtype="float32")
+            else:
+                image = np.asarray(sampled, dtype="float32")
+                if dataset.nodata is not None:
+                    image[image == dataset.nodata] = np.nan
         else:
-            image = np.asarray(sampled, dtype="float32")
-            if dataset.nodata is not None:
-                image[image == dataset.nodata] = np.nan
+            image = read_preprocessed_band(
+                dataset,
+                preprocessing_plan,
+                out_shape=(output_height, output_width),
+                resampling=Resampling.average,
+                apply_filter=True,
+            )
         transform = dataset.transform
         crs = dataset.crs
         scale_x = output_width / float(dataset.width)

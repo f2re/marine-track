@@ -63,6 +63,23 @@ def test_select_processing_asset_skips_preview(tmp_path):
     assert href.endswith("scene.tif")
 
 
+def test_select_processing_asset_prefers_vv_over_vh_for_rtc_scene():
+    scene = Scene(
+        provider="planetary_computer",
+        sensor=Sensor.SENTINEL1,
+        product_id="S1_RTC_DUAL_POL",
+        acquisition_time=datetime(2026, 7, 13, tzinfo=timezone.utc),
+        assets={
+            "vh": "https://example.test/measurement/iw-vh.rtc.tiff",
+            "vv": "https://example.test/measurement/iw-vv.rtc.tiff",
+        },
+    )
+
+    key, _href = select_processing_asset(scene)
+
+    assert key == "vv"
+
+
 def test_materialize_scene_from_token(tmp_path):
     raster = write_test_raster(tmp_path / "scene.tif")
     scene = make_scene(raster)

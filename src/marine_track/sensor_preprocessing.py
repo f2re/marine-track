@@ -364,6 +364,8 @@ def read_preprocessed_band(
     out_shape: tuple[int, int] | None = None,
     resampling: Any | None = None,
     apply_filter: bool = True,
+    boundless: bool = False,
+    fill_value: float | None = None,
 ) -> np.ndarray:
     kwargs: dict[str, Any] = {
         "window": window,
@@ -374,6 +376,10 @@ def read_preprocessed_band(
         kwargs["out_shape"] = out_shape
     if resampling is not None:
         kwargs["resampling"] = resampling
+    if boundless:
+        kwargs["boundless"] = True
+    if fill_value is not None:
+        kwargs["fill_value"] = fill_value
     masked = dataset.read(1, **kwargs)
     mask = np.ma.getmaskarray(masked)
     values = np.asarray(masked.filled(np.nan), dtype="float32")

@@ -156,8 +156,15 @@ def run_detection_for_token(
         detections,
         run_dir / "overview.png",
         title=f"{materialized.scene.sensor.value} {materialized.scene.acquisition_time.isoformat()}",
+        preprocessing_plan=preprocessing_plan,
     )
-    crop_pngs = render_crops(materialized.raster_path, detections, run_dir / "crops", max_crops)
+    crop_pngs = render_crops(
+        materialized.raster_path,
+        detections,
+        run_dir / "crops",
+        max_crops,
+        preprocessing_plan=preprocessing_plan,
+    )
     report_json = write_report_json(
         run_dir / "report.json",
         token,
@@ -218,13 +225,22 @@ def render_crops(
     detections: list[VesselDetection],
     crop_dir: Path,
     max_crops: int,
+    preprocessing_plan: SensorPreprocessingPlan | None = None,
 ) -> list[Path]:
     crop_dir.mkdir(parents=True, exist_ok=True)
     ranked = sorted(detections, key=lambda item: item.ranking_score, reverse=True)[:max_crops]
     crops: list[Path] = []
     for index, detection in enumerate(ranked, start=1):
         output = crop_dir / f"candidate_{index:03d}_{detection.detection_id}.png"
-        crops.append(render_vessel_crop(raster_path, detection, output, index=index))
+        crops.append(
+            render_vessel_crop(
+                raster_path,
+                detection,
+                output,
+                index=index,
+                preprocessing_plan=preprocessing_plan,
+            )
+        )
     return crops
 
 

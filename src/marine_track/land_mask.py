@@ -23,6 +23,7 @@ def prepare_land_mask(
     land_mask_geojson: str | Path | None,
     crs: Any,
     shoreline_buffer_m: float = 0.0,
+    raster_bounds: tuple[float, float, float, float] | None = None,
 ) -> PreparedLandMask | None:
     """Load, reproject and buffer a land mask once for repeated tile use."""
 
@@ -34,7 +35,12 @@ def prepare_land_mask(
     geometries = load_geojson_geometries(path)
     if not geometries:
         raise LandMaskError(f"land mask GeoJSON has no geometries: {path}")
-    projected = project_and_buffer_geometries(geometries, crs, shoreline_buffer_m)
+    projected = project_and_buffer_geometries(
+        geometries,
+        crs,
+        shoreline_buffer_m,
+        target_bounds=raster_bounds,
+    )
     return PreparedLandMask(
         geometries=projected,
         source=str(path),
@@ -93,11 +99,13 @@ def project_and_buffer_geometries(
     geometries: list[dict[str, Any]],
     target_crs: Any,
     shoreline_buffer_m: float,
+    target_bounds: tuple[float, float, float, float] | None = None,
 ) -> list[dict[str, Any]]:
     try:
         from pyproj import CRS, Transformer
-        from shapely.geometry import mapping, shape
+        from shapely.geometry import box, mapping, shape
         from shapely.ops import transform as shapely_transform
+        from shapely.validation import make_valid
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise LandMaskError("pyproj and shapely are required for land mask reprojection") from exc
 
@@ -106,13 +114,36 @@ def project_and_buffer_geometries(
     if dst_crs.to_epsg() != 4326:
         transformer = Transformer.from_crs("EPSG:4326", dst_crs, always_xy=True)
 
+    source_clip = None
+    if target_bounds is not None:
+        target_clip = box(*target_bounds)
+        if shoreline_buffer_m > 0:
+            target_clip = target_clip.buffer(
+                buffer_distance_for_crs(dst_crs, shoreline_buffer_m)
+            )
+        if dst_crs.to_epsg() == 4326:
+            source_clip = target_clip
+        else:
+            reverse = Transformer.from_crs(dst_crs, "EPSG:4326", always_xy=True)
+            source_clip = shapely_transform(reverse.transform, target_clip)
+
     output: list[dict[str, Any]] = []
     for geometry in geometries:
         geom = shape(geometry)
+        if not geom.is_valid:
+            geom = make_valid(geom)
+        if source_clip is not None:
+            if not geom.intersects(source_clip):
+                continue
+            geom = geom.intersection(source_clip)
+            if geom.is_empty:
+                continue
         if transformer is not None:
             geom = shapely_transform(transformer.transform, geom)
         if shoreline_buffer_m > 0:
             geom = geom.buffer(buffer_distance_for_crs(dst_crs, shoreline_buffer_m))
+        if not geom.is_valid:
+            geom = make_valid(geom)
         if not geom.is_empty:
             output.append(mapping(geom))
     return output

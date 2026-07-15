@@ -9,6 +9,7 @@ import numpy as np
 from marine_track.geospatial import lonlat_to_pixel
 from marine_track.models import VesselDetection
 from marine_track.rendering.overview import grayscale_to_bgr
+from marine_track.sensor_preprocessing import SensorPreprocessingPlan, read_preprocessed_band
 
 
 def render_vessel_crop(
@@ -16,7 +17,9 @@ def render_vessel_crop(
     detection: VesselDetection,
     output_png: str | Path,
     index: int,
-    crop_size_px: int = 512,
+    crop_size_px: int = 192,
+    output_size_px: int = 512,
+    preprocessing_plan: SensorPreprocessingPlan | None = None,
 ) -> Path:
     try:
         import rasterio
@@ -30,23 +33,37 @@ def render_vessel_crop(
         row_i = int(round(row))
         col_i = int(round(col))
         half = crop_size_px // 2
-        row0 = max(0, row_i - half)
-        col0 = max(0, col_i - half)
-        row1 = min(dataset.height, row0 + crop_size_px)
-        col1 = min(dataset.width, col0 + crop_size_px)
-        row0 = max(0, row1 - crop_size_px)
-        col0 = max(0, col1 - crop_size_px)
-        window = rasterio.windows.Window(col0, row0, col1 - col0, row1 - row0)
-        image = dataset.read(1, window=window).astype("float32")
-        if dataset.nodata is not None:
-            image[image == dataset.nodata] = np.nan
+        row0 = row_i - half
+        col0 = col_i - half
+        window = rasterio.windows.Window(col0, row0, crop_size_px, crop_size_px)
+        if preprocessing_plan is None:
+            sampled = dataset.read(
+                1,
+                window=window,
+                out_dtype="float32",
+                masked=True,
+                boundless=True,
+                fill_value=dataset.nodata if dataset.nodata is not None else np.nan,
+            )
+            image = np.asarray(sampled.filled(np.nan), dtype="float32")
+        else:
+            image = read_preprocessed_band(
+                dataset,
+                preprocessing_plan,
+                window=window,
+                apply_filter=True,
+                boundless=True,
+                fill_value=dataset.nodata if dataset.nodata is not None else np.nan,
+            )
         transform = dataset.transform
         crs = dataset.crs
 
     canvas = grayscale_to_bgr(image)
-    draw_ais_track(canvas, detection, transform, crs, row0=row0, col0=col0)
-    local_x = int(round(col - col0))
-    local_y = int(round(row - row0))
+    scale = output_size_px / float(crop_size_px)
+    canvas = cv2.resize(canvas, (output_size_px, output_size_px), interpolation=cv2.INTER_CUBIC)
+    draw_ais_track(canvas, detection, transform, crs, row0=row0, col0=col0, scale=scale)
+    local_x = int(round((col - col0) * scale))
+    local_y = int(round((row - row0) * scale))
     draw_crop_overlay(canvas, local_x, local_y, detection, index)
     cv2.imwrite(str(output), canvas)
     return output
@@ -119,7 +136,15 @@ def draw_wake_axis(canvas: np.ndarray, x: int, y: int, detection: VesselDetectio
     cv2.line(canvas, (x - dx, y - dy), (x + dx, y + dy), (255, 180, 0), 2)
 
 
-def draw_ais_track(canvas: np.ndarray, detection: VesselDetection, transform, crs, row0: int, col0: int) -> None:
+def draw_ais_track(
+    canvas: np.ndarray,
+    detection: VesselDetection,
+    transform,
+    crs,
+    row0: int,
+    col0: int,
+    scale: float = 1.0,
+) -> None:
     ais = detection.references.ais
     if ais is None or len(ais.track) < 2:
         return
@@ -131,8 +156,8 @@ def draw_ais_track(canvas: np.ndarray, detection: VesselDetection, transform, cr
             row, col = lonlat_to_pixel(float(point["lon"]), float(point["lat"]), transform, crs)
         except Exception:
             continue
-        x = int(round(col - col0))
-        y = int(round(row - row0))
+        x = int(round((col - col0) * scale))
+        y = int(round((row - row0) * scale))
         if -50 <= x <= canvas.shape[1] + 50 and -50 <= y <= canvas.shape[0] + 50:
             points.append((x, y))
     if len(points) < 2:

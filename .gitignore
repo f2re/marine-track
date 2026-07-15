@@ -5,10 +5,14 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .env
+.env.*
+!.env.example
 runs/*
 !runs/.gitkeep
 data/raw/
 data/processed/
+data/masks/cache/
+data/masks/land.geojson
 *.tif
 *.tiff
 *.nc
