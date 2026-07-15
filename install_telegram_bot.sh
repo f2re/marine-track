@@ -18,6 +18,14 @@ PREPARE_ONLY=0
 log() { printf '[marine-track-install] %s\n' "$*"; }
 fail() { log "ERROR: $*" >&2; exit 1; }
 
+print_onboarding() {
+  log "administrator guide: https://github.com/f2re/marine-track#quick-start"
+  log "create Telegram bot/token: https://t.me/BotFather"
+  log "minimal credentials: TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_IDS"
+  log "Sentinel-1 uses tokenless Planetary Computer by default"
+  log "optional provider registration links are documented in README and $ENV_FILE"
+}
+
 for argument in "$@"; do
   case "$argument" in
     --prepare-only) PREPARE_ONLY=1 ;;
@@ -72,7 +80,7 @@ elif [[ -f "$LEGACY_ENV" ]]; then
 fi
 log "canonical environment file: $ENV_FILE"
 log "provider secrets are optional and are not requested interactively"
-log "the default scene profile uses tokenless Planetary Computer; optional CDSE/Sentinel Hub credentials belong in $ENV_FILE"
+print_onboarding
 
 install -o root -g root -m 0644 \
   "$PROJECT_ROOT/ops/marine-track.service" /etc/systemd/system/marine-track.service
@@ -83,7 +91,9 @@ systemctl daemon-reload
 systemctl enable marine-track.service
 
 if [[ "$PREPARE_ONLY" == "1" ]]; then
-  log "installation prepared; set TELEGRAM_BOT_TOKEN and optional provider credentials in $ENV_FILE, then run deploy_telegram_bot.sh"
+  log "installation prepared"
+  log "next: sudoedit $ENV_FILE"
+  log "then: sudo bash $PROJECT_ROOT/deploy_telegram_bot.sh"
   exit 0
 fi
 
